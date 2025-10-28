@@ -1,0 +1,30 @@
+{
+  "hostname": "maahir-Aspire-A514-54",
+  "domain_id": 0,
+  "nodes": [
+    "/rosbag2_recorder",
+    "/rosbag2_recorder",
+    "/rosbag2_recorder"
+  ],
+  "topics": [
+    "/events/write_split",
+    "/parameter_events",
+    "/rosout"
+  ],
+  "services": [
+    "/rosbag2_recorder/describe_parameters",
+    "/rosbag2_recorder/get_parameter_types",
+    "/rosbag2_recorder/get_parameters",
+    "/rosbag2_recorder/list_parameters",
+    "/rosbag2_recorder/set_parameters",
+    "/rosbag2_recorder/set_parameters_atomically"
+  ],
+  "sensors": {
+    "other": [
+      "/events/write_split",
+      "/parameter_events",
+      "/rosout"
+    ]
+  },
+  "discovered_at": "2025-10-28T07:38:56.526501"
+}

@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ROS2
+*.bag
+*.db3
+*.yaml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Application specific
+ros2_recordings/
+ros2_uploads/
+*.sqlite
+*.log
+
+# Temporary test files (but keep test_installation.py)
+test_*.py
+!test_installation.py
