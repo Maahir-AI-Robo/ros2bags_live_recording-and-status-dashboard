@@ -103,100 +103,106 @@ class PerformanceModeManager(QObject):
         if mode == PerformanceMode.CUSTOM and self._custom_settings:
             return self._custom_settings
         
-        # HIGH PERFORMANCE MODE (16GB+ RAM, 8+ cores)
+        # HIGH PERFORMANCE MODE (16GB+ RAM, 8+ cores) - ULTRA-SMOOTH
         if mode == PerformanceMode.HIGH:
             return {
-                # Timer intervals (ms)
-                'ros2_update_interval': 1000,      # 1 second - very responsive
-                'metrics_update_interval': 250,    # 250ms - ultra responsive during recording
-                'history_update_interval': 5000,   # 5 seconds - frequent history updates
-                'chart_update_interval': 500,      # 500ms - smooth real-time charts
+                # Timer intervals (ms) - FASTEST FOR SMOOTHNESS
+                'ros2_update_interval': 1500,      # 1.5 seconds - minimal blocking
+                'metrics_update_interval': 200,    # 200ms - ultra-responsive
+                'history_update_interval': 5000,   # 5 seconds - quick updates
+                'chart_update_interval': 300,      # 300ms - very smooth charts
                 
-                # Thread pool settings
-                'max_threads': 6,                  # More parallel operations
-                'max_concurrent_threads': 4,       # Allow 4 concurrent operations
+                # Thread pool settings - MAXIMUM PARALLELISM
+                'max_threads': 8,                  # Many parallel operations
+                'max_concurrent_threads': 5,       # Allow many concurrent ops
                 
-                # Cache settings (seconds)
-                'cache_timeout': 1,                # 1 second - fresh data
-                'system_metrics_cache': 0.5,       # 500ms - very fresh system metrics
-                'topic_check_interval': 1,         # 1 second - frequent topic checks
+                # Cache settings (seconds) - BALANCED FOR SPEED
+                'cache_timeout': 3,                # 3 seconds - balance freshness/speed
+                'system_metrics_cache': 0.3,       # 300ms - very fresh metrics
+                'topic_check_interval': 3,         # 3 seconds - frequent but not excessive
                 
-                # Chart settings
-                'chart_buffer_size': 120,          # 2 minutes of data at 1s intervals
-                'chart_auto_pause': False,         # Don't auto-pause (plenty of resources)
+                # Chart settings - ULTRA-SMOOTH
+                'chart_buffer_size': 200,          # 1 minute at 300ms intervals
+                'chart_auto_pause': False,         # Always running on high-end
                 
                 # Memory settings
-                'history_max_entries': 1000,       # Large history
-                'enable_profiler': True,           # Enable performance profiler
-                'enable_advanced_features': True,  # All features enabled
+                'history_max_entries': 2000,       # Large history
+                'enable_profiler': True,           # Always profiling
+                'enable_advanced_features': True,  # All features
                 
-                # UI settings
-                'lazy_load_widgets': False,        # Load everything upfront
-                'process_priority': 'normal',      # Normal priority
+                # UI settings - ULTRA-SMOOTH
+                'lazy_load_widgets': False,        # Load everything for maximum responsiveness
+                'process_priority': 'high',        # High priority
+                'debounce_interval': 100,          # Minimal debounce
+                'batch_updates': False,            # Update immediately for smoothness
             }
         
-        # BALANCED MODE (8-16GB RAM, 4-8 cores) - Current optimized settings
+        # BALANCED MODE (8-16GB RAM, 4-8 cores) - OPTIMIZED FOR SMOOTHNESS
         elif mode == PerformanceMode.BALANCED:
             return {
-                # Timer intervals (ms)
-                'ros2_update_interval': 3000,      # 3 seconds - moderate
-                'metrics_update_interval': 500,    # 500ms - still responsive during recording
-                'history_update_interval': 15000,  # 15 seconds - moderate history updates
-                'chart_update_interval': 1000,     # 1 second - good real-time feel
+                # Timer intervals (ms) - OPTIMIZED FOR RESPONSIVENESS
+                'ros2_update_interval': 2000,      # 2 seconds - Less blocking, faster UI
+                'metrics_update_interval': 300,    # 300ms - Responsive during recording
+                'history_update_interval': 10000,  # 10 seconds - Lower priority
+                'chart_update_interval': 500,      # 500ms - Smooth charts without jank
                 
-                # Thread pool settings
-                'max_threads': 3,                  # Moderate parallelism
-                'max_concurrent_threads': 2,       # Allow 2 concurrent operations
+                # Thread pool settings - OPTIMIZED FOR SPEED
+                'max_threads': 4,                  # More parallelism = faster
+                'max_concurrent_threads': 3,       # Allow 3 concurrent operations
                 
-                # Cache settings (seconds)
-                'cache_timeout': 3,                # 3 seconds - balanced freshness
-                'system_metrics_cache': 1,         # 1 second - balanced system metrics
-                'topic_check_interval': 3,         # 3 seconds - moderate topic checks
+                # Cache settings (seconds) - AGGRESSIVE CACHING = NO BLOCKING
+                'cache_timeout': 5,                # 5 seconds - Less subprocess calls
+                'system_metrics_cache': 0.5,       # 500ms - Fresh but not excessive
+                'topic_check_interval': 5,         # 5 seconds - Reduced blocking
                 
-                # Chart settings
-                'chart_buffer_size': 60,           # 1 minute of data
-                'chart_auto_pause': True,          # Auto-pause when hidden (save resources)
+                # Chart settings - OPTIMIZED FOR SMOOTH RENDERING
+                'chart_buffer_size': 100,          # ~2 minutes at 500ms intervals
+                'chart_auto_pause': False,         # Keep running for smooth feel
                 
                 # Memory settings
-                'history_max_entries': 500,        # Moderate history
-                'enable_profiler': True,           # Enable performance profiler
+                'history_max_entries': 1000,       # Keep history for analysis
+                'enable_profiler': True,           # Monitor performance
                 'enable_advanced_features': True,  # All features enabled
                 
-                # UI settings
-                'lazy_load_widgets': True,         # Lazy load heavy widgets
-                'process_priority': 'normal',      # Normal priority
+                # UI settings - ULTRA-SMOOTH RENDERING
+                'lazy_load_widgets': True,         # Lazy load = faster startup
+                'process_priority': 'high',        # Higher priority = smoother execution
+                'debounce_interval': 300,          # Min 300ms between updates
+                'batch_updates': True,             # Batch table updates = smoother
             }
         
-        # LOW PERFORMANCE MODE (<8GB RAM, <4 cores)
+        # LOW PERFORMANCE MODE (<8GB RAM, <4 cores) - OPTIMIZE FOR SMOOTHNESS
         else:  # PerformanceMode.LOW
             return {
-                # Timer intervals (ms)
-                'ros2_update_interval': 5000,      # 5 seconds - reduce load
-                'metrics_update_interval': 1000,   # 1 second - still usable during recording
-                'history_update_interval': 30000,  # 30 seconds - minimal history updates
-                'chart_update_interval': 2000,     # 2 seconds - acceptable real-time
+                # Timer intervals (ms) - SLOWER BUT SMOOTH
+                'ros2_update_interval': 4000,      # 4 seconds - minimal blocking
+                'metrics_update_interval': 800,    # 800ms - reasonable during recording
+                'history_update_interval': 20000,  # 20 seconds - minimal updates
+                'chart_update_interval': 1500,     # 1.5 seconds - acceptable smoothness
                 
-                # Thread pool settings
+                # Thread pool settings - MINIMAL CONTENTION
                 'max_threads': 2,                  # Minimal threads
-                'max_concurrent_threads': 1,       # Only 1 operation at a time
+                'max_concurrent_threads': 1,       # One at a time to avoid CPU thrashing
                 
-                # Cache settings (seconds)
-                'cache_timeout': 5,                # 5 seconds - aggressive caching
+                # Cache settings (seconds) - MAXIMUM CACHING
+                'cache_timeout': 8,                # 8 seconds - aggressive caching
                 'system_metrics_cache': 2,         # 2 seconds - reduce system calls
-                'topic_check_interval': 5,         # 5 seconds - minimal topic checks
+                'topic_check_interval': 8,         # 8 seconds - minimal checks
                 
-                # Chart settings
-                'chart_buffer_size': 30,           # 30 seconds of data
-                'chart_auto_pause': True,          # Auto-pause when hidden (critical for low-end)
+                # Chart settings - OPTIMIZED FOR LOW-END
+                'chart_buffer_size': 40,           # 40 seconds of data
+                'chart_auto_pause': True,          # Auto-pause to save resources
                 
-                # Memory settings
-                'history_max_entries': 200,        # Minimal history
-                'enable_profiler': False,          # Disable profiler (saves resources)
+                # Memory settings - CONSERVATIVE
+                'history_max_entries': 300,        # Minimal history
+                'enable_profiler': False,          # Disable to save resources
                 'enable_advanced_features': True,  # Keep features but optimize
                 
-                # UI settings
-                'lazy_load_widgets': True,         # Lazy load everything possible
-                'process_priority': 'below_normal', # Lower priority to not interfere with ROS2
+                # UI settings - SMOOTH ON LOW-END
+                'lazy_load_widgets': True,         # Lazy load everything
+                'process_priority': 'below_normal', # Lower priority
+                'debounce_interval': 500,          # Aggressive debounce
+                'batch_updates': True,             # Batch updates = fewer redraws
             }
     
     def set_mode(self, mode: PerformanceMode):

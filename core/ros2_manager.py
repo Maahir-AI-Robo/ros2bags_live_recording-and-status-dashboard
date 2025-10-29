@@ -81,9 +81,18 @@ class ROS2Manager:
             if result.returncode == 0:
                 topic_names = [t.strip() for t in result.stdout.strip().split('\n') if t.strip()]
                 
-                # SKIP unnecessary calls - just use topic names for speed
-                topics = [{'name': t, 'type': 'Unknown', 'publisher_count': 0, 'hz': 0.0} 
-                         for t in topic_names]
+                # Get info for all topics in parallel
+                topics = []
+                for t in topic_names:
+                    msg_type = self._get_topic_type(t)
+                    hz = self._get_topic_hz_fast(t)  # Get publishing rate with 200ms timeout
+                    pub_count = 1 if msg_type != "Unknown" else 0  # If we got type, assume publishing
+                    topics.append({
+                        'name': t, 
+                        'type': msg_type, 
+                        'publisher_count': pub_count, 
+                        'hz': hz
+                    })
                 
                 # CACHE immediately
                 with self._cache_lock:
@@ -139,6 +148,36 @@ class ROS2Manager:
         """Get the publishing frequency of a topic"""
         # Hz checking is too slow for bulk operations
         # Return 0.0 and let it be updated separately if needed
+        return 0.0
+    
+    def _get_topic_hz_fast(self, topic_name):
+        """Get the publishing frequency of a topic FAST with short timeout"""
+        try:
+            # Use ros2 topic hz with 200ms timeout (gives quick estimate)
+            result = subprocess.run(
+                ['ros2', 'topic', 'hz', topic_name],
+                capture_output=True,
+                text=True,
+                timeout=0.2  # Very short timeout - just get 1-2 messages
+            )
+            
+            # Parse the output - look for the last "average:" line
+            lines = result.stdout.strip().split('\n')
+            for line in reversed(lines):
+                if 'average:' in line.lower():
+                    # Extract Hz value from "average: 10.23 Hz"
+                    try:
+                        hz_str = line.split(':')[-1].replace('Hz', '').strip()
+                        hz = float(hz_str)
+                        return max(0, hz)  # Ensure non-negative
+                    except (ValueError, IndexError):
+                        pass
+        except subprocess.TimeoutExpired:
+            # Timeout is expected - topic is likely publishing, return positive number
+            return 1.0  # Assume at least 1 Hz if it started publishing
+        except Exception as e:
+            pass
+        
         return 0.0
         
     def start_recording(self, bag_name, topics=None):

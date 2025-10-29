@@ -15,9 +15,10 @@ class TopicMonitorWidget(QWidget):
     topic_selected = pyqtSignal(str, bool)  # topic_name, is_selected
     topics_changed = pyqtSignal(list)  # emitted when selected topics change
     
-    def __init__(self, ros2_manager):
+    def __init__(self, ros2_manager, async_ros2_manager=None):
         super().__init__()
         self.ros2_manager = ros2_manager
+        self.async_ros2_manager = async_ros2_manager  # NEW: optional async manager
         self.selected_topics = set()
         self.init_ui()
         
@@ -75,59 +76,18 @@ class TopicMonitorWidget(QWidget):
         # Don't do initial refresh - let timer handle it
         
     def refresh_topics(self):
-        """Refresh the list of available topics"""
-        try:
-            topics_info = self.ros2_manager.get_topics_info()
-            
-            self.topics_table.setRowCount(len(topics_info))
-            self.topic_count_label.setText(f"Topics: {len(topics_info)}")
-            
-            for idx, topic_info in enumerate(topics_info):
-                # Checkbox for recording selection
-                checkbox = QCheckBox()
-                checkbox.setChecked(topic_info['name'] in self.selected_topics)
-                checkbox.stateChanged.connect(
-                    lambda state, name=topic_info['name']: self.on_topic_selected(name, state)
-                )
-                
-                checkbox_widget = QWidget()
-                checkbox_layout = QHBoxLayout(checkbox_widget)
-                checkbox_layout.addWidget(checkbox)
-                checkbox_layout.setAlignment(Qt.AlignCenter)
-                checkbox_layout.setContentsMargins(0, 0, 0, 0)
-                
-                self.topics_table.setCellWidget(idx, 0, checkbox_widget)
-                
-                # Topic name
-                name_item = QTableWidgetItem(topic_info['name'])
-                self.topics_table.setItem(idx, 1, name_item)
-                
-                # Message type
-                msg_type_item = QTableWidgetItem(topic_info.get('type', 'Unknown'))
-                self.topics_table.setItem(idx, 2, msg_type_item)
-                
-                # Publisher count
-                pub_count = topic_info.get('publisher_count', 0)
-                pub_item = QTableWidgetItem(str(pub_count))
-                pub_item.setTextAlignment(Qt.AlignCenter)
-                
-                # Color code based on publisher count
-                if pub_count > 0:
-                    pub_item.setForeground(QColor('green'))
-                else:
-                    pub_item.setForeground(QColor('gray'))
-                    
-                self.topics_table.setItem(idx, 3, pub_item)
-                
-                # Frequency
-                hz = topic_info.get('hz', 0.0)
-                hz_item = QTableWidgetItem(f"{hz:.1f}")
-                hz_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                self.topics_table.setItem(idx, 4, hz_item)
-            
-        except Exception as e:
-            print(f"Error refreshing topics: {e}")
-            self.topic_count_label.setText(f"Topics: 0 (Error: ROS2 may not be running)")
+        """Refresh the list of available topics - NON-BLOCKING using async"""
+        if self.async_ros2_manager:
+            # Use async manager - callback when data ready
+            self.async_ros2_manager.get_topics_async(self.update_topics_data)
+        else:
+            # Fallback: sync call with error handling
+            try:
+                topics_info = self.ros2_manager.get_topics_info()
+                self.update_topics_data(topics_info)
+            except Exception as e:
+                print(f"Error refreshing topics: {e}")
+                self.topic_count_label.setText(f"Topics: 0 (Error: ROS2 may not be running)")
             
     def on_topic_selected(self, topic_name, state):
         """Handle topic selection change"""

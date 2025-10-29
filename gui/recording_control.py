@@ -5,10 +5,102 @@ Recording Control Widget - controls for starting/stopping ROS2 bag recording
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,  # type: ignore
                              QGroupBox, QLabel, QLineEdit, QFileDialog, QCheckBox,
                              QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox)
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer  # type: ignore
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QThread  # type: ignore
 from PyQt5.QtGui import QFont, QColor
 import os
 from datetime import datetime
+import threading
+import time
+import subprocess
+
+
+class HzMonitorThread(QThread):
+    """Background thread that monitors topic publishing rates"""
+    
+    hz_updated = pyqtSignal(dict)  # Emits {topic_name: hz_rate}
+    
+    def __init__(self, ros2_manager):
+        super().__init__()
+        self.ros2_manager = ros2_manager
+        self.is_running = False
+        self.topics_to_monitor = set()
+        self._lock = threading.Lock()
+    
+    def set_topics(self, topics):
+        """Set list of topics to monitor"""
+        with self._lock:
+            self.topics_to_monitor = set(topics)
+    
+    def run(self):
+        """Monitor Hz of topics in background"""
+        self.is_running = True
+        consecutive_errors = 0
+        
+        while self.is_running:
+            try:
+                with self._lock:
+                    topics = list(self.topics_to_monitor)
+                
+                if not topics:
+                    time.sleep(0.5)
+                    continue
+                
+                # Get Hz for all topics rapidly
+                hz_rates = {}
+                for topic_name in topics:
+                    try:
+                        hz = self._get_hz_for_topic(topic_name)
+                        hz_rates[topic_name] = hz
+                    except Exception as e:
+                        hz_rates[topic_name] = 0.0
+                
+                # Emit results
+                if hz_rates:
+                    self.hz_updated.emit(hz_rates)
+                
+                consecutive_errors = 0
+                time.sleep(1.0)  # Update every second
+                
+            except Exception as e:
+                consecutive_errors += 1
+                if consecutive_errors > 5:
+                    print(f"Hz monitor error: {e}")
+                    consecutive_errors = 0
+                time.sleep(0.5)
+    
+    def _get_hz_for_topic(self, topic_name):
+        """Get Hz for a single topic with timeout"""
+        try:
+            result = subprocess.run(
+                ['ros2', 'topic', 'hz', topic_name],
+                capture_output=True,
+                text=True,
+                timeout=0.15  # Very short timeout
+            )
+            
+            # Parse output for Hz value
+            lines = result.stdout.strip().split('\n')
+            for line in reversed(lines):
+                if 'average:' in line.lower():
+                    try:
+                        hz_str = line.split(':')[-1].replace('Hz', '').strip()
+                        hz = float(hz_str)
+                        return max(0, hz)
+                    except (ValueError, IndexError):
+                        pass
+        except subprocess.TimeoutExpired:
+            # Timeout means it's publishing, return 1+ Hz
+            return 1.0
+        except Exception:
+            pass
+        
+        return 0.0
+    
+    def stop(self):
+        """Stop the monitoring thread"""
+        self.is_running = False
+        self.wait()
+
 
 
 class RecordingControlWidget(QWidget):
@@ -17,12 +109,21 @@ class RecordingControlWidget(QWidget):
     recording_started = pyqtSignal()
     recording_stopped = pyqtSignal()
     
-    def __init__(self, ros2_manager):
+    def __init__(self, ros2_manager, async_ros2_manager=None):
         super().__init__()
         self.ros2_manager = ros2_manager
+        self.async_ros2_manager = async_ros2_manager
         self.is_recording = False
         self.current_bag_name = None
         self.current_bag_metadata = None
+        self._last_rates_update = 0
+        self._rates_update_cooldown = 1.0  # Don't update more than once per second
+        
+        # Initialize Hz monitor thread (runs continuously in background)
+        self.hz_monitor_thread = HzMonitorThread(ros2_manager)
+        self.hz_monitor_thread.hz_updated.connect(self._on_hz_updated)
+        self.hz_monitor_thread.start()
+        
         self.init_ui()
         
     def init_ui(self):
@@ -96,20 +197,28 @@ class RecordingControlWidget(QWidget):
         group.setLayout(group_layout)
         layout.addWidget(group)
         
-        # Selected Topics Monitor
-        topics_group = QGroupBox("📊 Selected Topics (Live Rates)")
+        # Selected Topics Monitor - LARGER
+        topics_group = QGroupBox("📊 Selected Topics (Live Rates & Data Status)")
         topics_layout = QVBoxLayout()
         
-        # Topics table with rates
+        # Topics table with rates and message type
         self.selected_topics_table = QTableWidget()
-        self.selected_topics_table.setColumnCount(3)
-        self.selected_topics_table.setHorizontalHeaderLabels(['Topic Name', 'Rate (Hz)', 'Status'])
+        self.selected_topics_table.setColumnCount(5)
+        self.selected_topics_table.setHorizontalHeaderLabels([
+            'Topic Name', 'Message Type', 'Rate (Hz)', 'Data Status', 'Alert'
+        ])
         header = self.selected_topics_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.selected_topics_table.setMaximumHeight(200)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        
+        # MUCH LARGER - 350 pixels instead of 200
+        self.selected_topics_table.setMinimumHeight(350)
+        self.selected_topics_table.setMaximumHeight(500)
         self.selected_topics_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.selected_topics_table.setSelectionBehavior(QTableWidget.SelectRows)
         topics_layout.addWidget(self.selected_topics_table)
         
         # Info label
@@ -120,8 +229,8 @@ class RecordingControlWidget(QWidget):
         topics_group.setLayout(topics_layout)
         layout.addWidget(topics_group)
         
-        # Initialize topics tracking
-        self.selected_topics_data = {}  # {topic_name: {'rate': 0.0, 'last_seen': time, 'stalled': False}}
+        # Initialize topics tracking with message type and data presence
+        self.selected_topics_data = {}  # {topic_name: {'rate': 0.0, 'msg_type': '', 'has_data': False, ...}}
         self.topic_rates_timer = QTimer()
         self.topic_rates_timer.timeout.connect(self.update_topic_rates)
         
@@ -199,6 +308,9 @@ class RecordingControlWidget(QWidget):
             # Start rate monitoring
             self.start_rate_monitoring()
             
+            # Tell Hz monitor thread to watch these topics
+            self.hz_monitor_thread.set_topics(list(self.selected_topics_data.keys()))
+            
             self.recording_started.emit()
         else:
             QMessageBox.critical(self, "Error", "Failed to start recording. Make sure ROS2 is running.")
@@ -221,6 +333,9 @@ class RecordingControlWidget(QWidget):
         # Stop rate monitoring
         self.stop_rate_monitoring()
         
+        # Tell Hz monitor to stop monitoring
+        self.hz_monitor_thread.set_topics([])
+        
         self.recording_stopped.emit()
     
     def update_selected_topics(self, selected_topics):
@@ -232,7 +347,9 @@ class RecordingControlWidget(QWidget):
                     'rate': 0.0,
                     'last_rate': 0.0,
                     'stalled': False,
-                    'stalled_count': 0
+                    'stalled_count': 0,
+                    'msg_type': 'Unknown',
+                    'has_data': False
                 }
         
         # Remove topics no longer selected
@@ -243,16 +360,23 @@ class RecordingControlWidget(QWidget):
         # Update table
         self.refresh_selected_topics_table()
         
+        # Tell Hz monitor about topics (even if not recording yet)
+        self.hz_monitor_thread.set_topics(selected_topics)
+        
         # Start rate update timer if recording
         if self.is_recording and not self.topic_rates_timer.isActive():
             self.topic_rates_timer.start(1000)  # Update every second
     
     def refresh_selected_topics_table(self):
-        """Refresh the selected topics table display"""
+        """Refresh the selected topics table display with data status and message type - OPTIMIZED"""
+        # BATCH UPDATES - Disable updates during bulk changes (smoother rendering)
+        self.selected_topics_table.setUpdatesEnabled(False)
+        
         self.selected_topics_table.setRowCount(len(self.selected_topics_data))
         
         if not self.selected_topics_data:
             self.topics_info_label.setText("No topics selected yet")
+            self.selected_topics_table.setUpdatesEnabled(True)
             return
         
         self.topics_info_label.setText(f"Monitoring {len(self.selected_topics_data)} topic(s)")
@@ -263,50 +387,101 @@ class RecordingControlWidget(QWidget):
             topic_item.setFont(QFont("Monospace", 9))
             self.selected_topics_table.setItem(row, 0, topic_item)
             
+            # Message Type
+            msg_type = data.get('msg_type', 'Unknown')
+            type_item = QTableWidgetItem(msg_type)
+            type_item.setFont(QFont("Monospace", 8))
+            self.selected_topics_table.setItem(row, 1, type_item)
+            
             # Rate
             rate = data['rate']
             rate_item = QTableWidgetItem(f"{rate:.2f} Hz")
-            rate_item.setTextAlignment(Qt.AlignCenter)
-            self.selected_topics_table.setItem(row, 1, rate_item)
+            self.selected_topics_table.setItem(row, 2, rate_item)
             
-            # Status with color coding
-            if data['stalled']:
-                status = "⚠️ STALLED"
+            # Data Status with COLOR CODING (GREEN = has data, RED = no data)
+            has_data = data.get('has_data', False)
+            if has_data:
+                status = "🟢 DATA OK"
                 status_item = QTableWidgetItem(status)
-                status_item.setForeground(QColor('#ff5252'))  # Red
+                status_item.setForeground(QColor('#00c853'))  # Bright Green
                 status_item.setFont(QFont("", -1, QFont.Bold))
-            elif rate > 0:
-                status = "✅ OK"
-                status_item = QTableWidgetItem(status)
-                status_item.setForeground(QColor('#4CAF50'))  # Green
             else:
-                status = "⏸️ NO DATA"
+                status = "🔴 NO DATA"
                 status_item = QTableWidgetItem(status)
-                status_item.setForeground(QColor('#ff9800'))  # Orange
+                status_item.setForeground(QColor('#d32f2f'))  # Bright Red
+                status_item.setFont(QFont("", -1, QFont.Bold))
             
-            status_item.setTextAlignment(Qt.AlignCenter)
-            self.selected_topics_table.setItem(row, 2, status_item)
+            self.selected_topics_table.setItem(row, 3, status_item)
+            
+            # Alert/Warning System
+            if data['stalled']:
+                alert = "⚠️ STALLED"
+                alert_item = QTableWidgetItem(alert)
+                alert_item.setForeground(QColor('#ff6f00'))  # Orange
+                alert_item.setFont(QFont("", -1, QFont.Bold))
+            elif rate > 0:
+                alert = "✅ ACTIVE"
+                alert_item = QTableWidgetItem(alert)
+                alert_item.setForeground(QColor('#4CAF50'))  # Green
+            else:
+                alert = "⏸️ IDLE"
+                alert_item = QTableWidgetItem(alert)
+                alert_item.setForeground(QColor('#ff9800'))  # Orange
+            
+            self.selected_topics_table.setItem(row, 4, alert_item)
+        
+        # RE-ENABLE UPDATES - All changes rendered at once (smoother, faster)
+        self.selected_topics_table.setUpdatesEnabled(True)
     
     def update_topic_rates(self):
-        """Update topic rates (called periodically during recording)"""
+        """Update topic rates (called periodically during recording) - NON-BLOCKING"""
         if not self.is_recording:
             self.topic_rates_timer.stop()
             return
         
+        # DEBOUNCE - prevent excessive calls
+        current_time = time.time()
+        if current_time - self._last_rates_update < self._rates_update_cooldown:
+            return
+        self._last_rates_update = current_time
+        
+        # Use async manager if available, otherwise fall back to sync (with fast fail)
+        if self.async_ros2_manager:
+            # Call async to prevent UI blocking
+            self.async_ros2_manager.get_topics_async(self._on_topics_info_received)
+        else:
+            # Fallback: call sync but with timeout handling
+            try:
+                topics_info = self.ros2_manager.get_topics_info()
+                self._process_topics_info(topics_info)
+            except Exception as e:
+                print(f"Error updating topic rates: {e}")
+    
+    def _on_topics_info_received(self, topics_info):
+        """Callback when topics info is received from async worker"""
+        self._process_topics_info(topics_info)
+    
+    def _process_topics_info(self, topics_info):
+        """Process topics info and update display - EXTRACTED to prevent blocking"""
         try:
-            # Get current topics info from ROS2
-            topics_info = self.ros2_manager.get_topics_info()
-            current_time = datetime.now().timestamp()
+            # Build a lookup for fast access
+            topics_by_name = {t['name']: t for t in topics_info}
             
             # Update rates for each selected topic
             for topic_name, data in self.selected_topics_data.items():
-                # Find this topic in the list
-                topic_data = next((t for t in topics_info if t['name'] == topic_name), None)
+                topic_data = topics_by_name.get(topic_name)
                 
                 if topic_data:
+                    # Get current rate and message type
                     rate = topic_data.get('hz', 0.0)
+                    msg_type = topic_data.get('type', 'Unknown')
+                    
+                    # Store previous rate for stall detection
                     data['last_rate'] = data['rate']
                     data['rate'] = rate
+                    
+                    # Set has_data based on rate (if publishing, has_data = True)
+                    data['has_data'] = rate > 0
                     
                     # Detect stalling: rate dropped to 0 from non-zero
                     if data['last_rate'] > 0 and rate == 0:
@@ -315,9 +490,14 @@ class RecordingControlWidget(QWidget):
                     elif rate > 0:
                         data['stalled'] = False
                         data['stalled_count'] = 0
+                    
+                    # Update message type
+                    if msg_type and msg_type != "Unknown":
+                        data['msg_type'] = msg_type
                 else:
                     # Topic disappeared
                     data['rate'] = 0.0
+                    data['has_data'] = False
                     data['stalled'] = True
                     data['stalled_count'] += 1
             
@@ -325,7 +505,34 @@ class RecordingControlWidget(QWidget):
             self.refresh_selected_topics_table()
             
         except Exception as e:
-            print(f"Error updating topic rates: {e}")
+            print(f"Error processing topic rates: {e}")
+    
+    def _on_hz_updated(self, hz_rates):
+        """Callback when Hz monitor thread updates publishing rates"""
+        try:
+            # Update rates for topics from background Hz monitor
+            for topic_name, hz in hz_rates.items():
+                if topic_name in self.selected_topics_data:
+                    data = self.selected_topics_data[topic_name]
+                    data['last_rate'] = data['rate']
+                    data['rate'] = hz
+                    
+                    # Set has_data based on rate
+                    data['has_data'] = hz > 0
+                    
+                    # Detect stalling
+                    if data['last_rate'] > 0 and hz == 0:
+                        data['stalled'] = True
+                        data['stalled_count'] += 1
+                    elif hz > 0:
+                        data['stalled'] = False
+                        data['stalled_count'] = 0
+            
+            # Refresh table display (batched updates)
+            self.refresh_selected_topics_table()
+            
+        except Exception as e:
+            print(f"Error in Hz update callback: {e}")
     
     def start_rate_monitoring(self):
         """Start monitoring topic rates"""

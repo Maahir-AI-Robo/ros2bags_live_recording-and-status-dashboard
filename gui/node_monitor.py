@@ -12,9 +12,10 @@ from PyQt5.QtGui import QColor  # type: ignore
 class NodeMonitorWidget(QWidget):
     """Widget for monitoring ROS2 nodes"""
     
-    def __init__(self, ros2_manager):
+    def __init__(self, ros2_manager, async_ros2_manager=None):
         super().__init__()
         self.ros2_manager = ros2_manager
+        self.async_ros2_manager = async_ros2_manager  # NEW: optional async manager
         self.init_ui()
         
     def init_ui(self):
@@ -57,41 +58,18 @@ class NodeMonitorWidget(QWidget):
         self.setLayout(layout)
         
     def refresh_nodes(self):
-        """Refresh the list of ROS2 nodes"""
-        try:
-            nodes_info = self.ros2_manager.get_nodes_info()
-            
-            self.nodes_table.setRowCount(len(nodes_info))
-            self.node_count_label.setText(f"Nodes: {len(nodes_info)}")
-            
-            for idx, node_info in enumerate(nodes_info):
-                # Node name
-                name_item = QTableWidgetItem(node_info['name'])
-                self.nodes_table.setItem(idx, 0, name_item)
-                
-                # Namespace
-                namespace_item = QTableWidgetItem(node_info.get('namespace', '/'))
-                self.nodes_table.setItem(idx, 1, namespace_item)
-                
-                # Publishers
-                pub_count = node_info.get('publishers', 0)
-                pub_item = QTableWidgetItem(str(pub_count))
-                pub_item.setTextAlignment(Qt.AlignCenter)
-                if pub_count > 0:
-                    pub_item.setForeground(QColor('green'))
-                self.nodes_table.setItem(idx, 2, pub_item)
-                
-                # Subscribers
-                sub_count = node_info.get('subscribers', 0)
-                sub_item = QTableWidgetItem(str(sub_count))
-                sub_item.setTextAlignment(Qt.AlignCenter)
-                if sub_count > 0:
-                    sub_item.setForeground(QColor('blue'))
-                self.nodes_table.setItem(idx, 3, sub_item)
-                
-        except Exception as e:
-            print(f"Error refreshing nodes: {e}")
-            self.node_count_label.setText("Nodes: 0 (Error)")
+        """Refresh the list of ROS2 nodes - NON-BLOCKING using async"""
+        if self.async_ros2_manager:
+            # Use async manager - callback when data ready
+            self.async_ros2_manager.get_nodes_async(self.update_nodes_data)
+        else:
+            # Fallback: sync call with error handling
+            try:
+                nodes_info = self.ros2_manager.get_nodes_info()
+                self.update_nodes_data(nodes_info)
+            except Exception as e:
+                print(f"Error refreshing nodes: {e}")
+                self.node_count_label.setText("Nodes: 0 (Error)")
 
     def update_nodes_data(self, nodes_info):
         """Update nodes from async data - HIGH PERFORMANCE"""
