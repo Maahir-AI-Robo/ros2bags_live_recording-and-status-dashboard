@@ -94,6 +94,10 @@ class LiveChartsWidget(QWidget):
         # Connect signal to UI update
         self.topic_count_ready.connect(self._on_topic_count_ready)  # type: ignore
 
+        # LAZY LOADING: Don't create plots immediately - create them on first show
+        self._ui_initialized = False
+        self._charts_loaded = False
+        
         self.init_ui()
         self.setup_update_timer()
     
@@ -121,12 +125,35 @@ class LiveChartsWidget(QWidget):
         }
         
     def init_ui(self):
-        """Initialize UI components"""
-        layout = QVBoxLayout()
+        """Initialize UI components - LAZY LOADING: charts created on first view"""
+        self.main_layout = QVBoxLayout()
+        
+        # Show loading message initially
+        loading_label = QLabel("📊 Charts loading... (appears on first view)")
+        loading_label.setAlignment(Qt.AlignCenter)  # type: ignore
+        loading_label.setStyleSheet("color: #666; font-size: 14px; padding: 40px;")
+        self.main_layout.addWidget(loading_label)
+        
+        self.setLayout(self.main_layout)
+    
+    def _load_charts(self):
+        """LAZY LOADING: Create charts only when tab is first viewed"""
+        if self._charts_loaded:
+            return
+        
+        print("📊 Lazy loading Live Charts widget...")
+        
+        # Clear placeholder
+        while self.main_layout.count():
+            item = self.main_layout.takeAt(0)
+            if item is not None:
+                widget = item.widget()
+                if widget:
+                    widget.deleteLater()
         
         # Control panel
         controls = self.create_controls()
-        layout.addWidget(controls)
+        self.main_layout.addWidget(controls)
         
         # Create chart grid
         charts_layout = QGridLayout()
@@ -184,13 +211,14 @@ class LiveChartsWidget(QWidget):
         
         charts_group = QGroupBox("Real-Time Performance Monitoring")
         charts_group.setLayout(charts_layout)
-        layout.addWidget(charts_group, 1)  # Give charts more space in main layout
+        self.main_layout.addWidget(charts_group, 1)  # Give charts more space in main layout
         
         # Statistics panel
         stats = self.create_statistics_panel()
-        layout.addWidget(stats)
+        self.main_layout.addWidget(stats)
         
-        self.setLayout(layout)
+        self._charts_loaded = True
+        print("✅ Live Charts loaded successfully")
         
     def create_controls(self):
         """Create control panel"""
@@ -306,13 +334,20 @@ class LiveChartsWidget(QWidget):
         self.update_timer.start(self.update_interval)
         
     def showEvent(self, event):
-        """Resume updates when tab becomes visible"""
+        """Resume updates when tab becomes visible - LAZY LOAD charts on first view"""
         super().showEvent(event)
+        
+        # LAZY LOAD: Create charts only on first view (massive performance boost for startup)
+        if not self._charts_loaded:
+            self._load_charts()
+        
         if hasattr(self, 'update_timer') and self.auto_pause and not self.paused:
             # Only start if user hasn't manually paused
             self.update_timer.start(self.update_interval)
-            self.pause_btn.setText("⏸ Pause")
-            self.status_label.setText("📊 Monitoring Active")
+            if hasattr(self, 'pause_btn'):
+                self.pause_btn.setText("⏸ Pause")
+            if hasattr(self, 'status_label'):
+                self.status_label.setText("📊 Monitoring Active")
             
     def hideEvent(self, event):
         """Pause updates when tab is hidden to save resources (if auto_pause enabled)"""
@@ -325,6 +360,10 @@ class LiveChartsWidget(QWidget):
         
     def update_charts(self):
         """Update all charts with latest data - DYNAMIC OPTIMIZATION"""
+        # SAFETY: Skip updates if charts not yet loaded (lazy loading)
+        if not self._charts_loaded:
+            return
+        
         if self.paused:
             return
         
