@@ -46,12 +46,15 @@ class ScrollEventFilter(QObject):
     
     def eventFilter(self, obj, event):
         """Filter scroll events to pause updates"""
-        from PyQt5.QtGui import QWheelEvent
         from PyQt5.QtCore import QEvent as QtEvent
         
-        # Detect scroll wheel and scroll bar events
-        if event.type() in [QtEvent.Wheel, QtEvent.ScrollUpdate]:
+        # Detect scroll wheel events (Wheel event is fired when mouse wheel scrolls)
+        # Also detect ValueChanged from scrollbars (QAbstractSlider events)
+        if event.type() == QtEvent.Wheel:
             self.main_window.pause_updates_for_scroll()
+        elif hasattr(obj, 'sliderMoved'):  # It's a scrollbar
+            if event.type() == QtEvent.ValueChanged:
+                self.main_window.pause_updates_for_scroll()
         
         return False  # Continue processing the event
 
