@@ -287,6 +287,9 @@ class MainWindow(QMainWindow):
         history_scroll.setWidgetResizable(True)
         self.tabs.addTab(history_scroll, "📁 History")
         
+        # Connect tab change signal for smooth transitions
+        self.tabs.currentChanged.connect(self.on_tab_changed)
+        
         splitter.addWidget(self.tabs)
         
         # Set splitter sizes - now only 2 sections (top + tabs, no bottom history)
@@ -719,6 +722,36 @@ class MainWindow(QMainWindow):
         elif current_tab == 2:  # Services tab
             self.service_monitor.refresh_services()
         # Tabs 3-9 don't need frequent ROS2 updates (they update on demand)
+        
+    def on_tab_changed(self, new_tab_index):
+        """
+        Handle tab changes with rendering optimization
+        
+        Pauses non-essential updates during tab switch for smooth transitions
+        Then triggers an immediate update of the new tab for responsiveness
+        """
+        try:
+            # Temporarily disable timer to reduce UI work during tab switch
+            was_running = self.ros2_timer.isActive()
+            if was_running:
+                self.ros2_timer.stop()
+            
+            # Process events to let tab rendering complete
+            from PyQt5.QtWidgets import QApplication
+            QApplication.instance().processEvents()
+            
+            # Resume timer and immediately update the new tab
+            if was_running:
+                self.ros2_timer.start()
+                # Force immediate update of the new tab for responsiveness
+                if new_tab_index == 0 and hasattr(self, 'topic_monitor'):
+                    self.topic_monitor.refresh_topics()
+                elif new_tab_index == 1 and hasattr(self, 'node_monitor'):
+                    self.node_monitor.refresh_nodes()
+                elif new_tab_index == 2 and hasattr(self, 'service_monitor'):
+                    self.service_monitor.refresh_services()
+        except Exception:
+            pass  # Silent fail - tab switching should never freeze UI
         
     def update_metrics(self):
         """Update dashboard metrics - AGGRESSIVE debouncing"""
