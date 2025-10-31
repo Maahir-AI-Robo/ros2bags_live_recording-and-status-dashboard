@@ -6,7 +6,8 @@ High-performance plotting using pyqtgraph for zero-latency updates
 import pyqtgraph as pg
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QComboBox, QGroupBox, QGridLayout, QCheckBox)
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QRunnable, QThreadPool, pyqtSignal  # type: ignore
+import psutil
 from PyQt5.QtGui import QFont
 import numpy as np
 from collections import deque
@@ -15,6 +16,27 @@ from datetime import datetime
 
 class LiveChartsWidget(QWidget):
     """Widget for real-time data visualization with multiple charts"""
+    # Signal emitted when background topic count is ready
+    topic_count_ready = pyqtSignal(int)
+    
+    class TopicCountWorker(QRunnable):
+        """Background worker to fetch topic count without blocking UI"""
+        def __init__(self, ros2_manager, signal):
+            super().__init__()
+            self.ros2_manager = ros2_manager
+            self.signal = signal
+
+        def run(self):
+            try:
+                topics = self.ros2_manager.get_topics_info()
+                count = len(topics) if topics is not None else 0
+            except Exception:
+                count = 0
+            try:
+                # emit signal with topic count (safe from background thread)
+                self.signal.emit(count)
+            except Exception:
+                pass
     
     def __init__(self, metrics_collector, ros2_manager, buffer_size=60, update_interval=1000, auto_pause=True):
         super().__init__()
@@ -44,6 +66,13 @@ class LiveChartsWidget(QWidget):
         self.paused = not auto_pause  # Auto-pause if enabled
         self.update_counter = 0  # For optimization
         
+        # Threadpool for background small tasks (topic count)
+        self._threadpool = QThreadPool()
+        self._threadpool.setMaxThreadCount(1)
+        self._last_topic_async = 0
+        # Connect signal to UI update
+        self.topic_count_ready.connect(self._on_topic_count_ready)  # type: ignore
+
         self.init_ui()
         self.setup_update_timer()
         
@@ -254,7 +283,28 @@ class LiveChartsWidget(QWidget):
         """Update all charts with latest data - OPTIMIZED"""
         if self.paused:
             return
-            
+        # Adaptive CPU-based throttling: if system is overloaded, back off chart updates
+        try:
+            cpu_now = psutil.cpu_percent(interval=0)
+        except Exception:
+            cpu_now = 0.0
+        # If CPU is very high, increase timer interval to reduce load
+        if cpu_now > 85.0:
+            # Increase interval (but cap to 5s)
+            try:
+                self.update_timer.setInterval(min(max(self.update_interval * 2, 1000), 5000))
+            except Exception:
+                pass
+            # Skip heavy plotting cycle while backing off
+            return
+        else:
+            # Restore normal interval if previously increased
+            try:
+                if self.update_timer.interval() != self.update_interval:
+                    self.update_timer.setInterval(self.update_interval)
+            except Exception:
+                pass
+
         self.update_counter += 1
             
         # Initialize start time if first update
@@ -266,9 +316,10 @@ class LiveChartsWidget(QWidget):
         self.time_data.append(elapsed)
         
         # Get live metrics (includes system stats even when not recording)
+        # NOTE: avoid calling blocking ROS2 operations on the main thread.
         try:
-            metrics = self.metrics_collector.get_live_metrics(self.ros2_manager)
-        except:
+            metrics = self.metrics_collector.get_live_metrics(None)
+        except Exception:
             # If metrics fail, use zeros to keep charts updating
             metrics = {
                 'message_rate': 0,
@@ -288,6 +339,16 @@ class LiveChartsWidget(QWidget):
         self.cpu_data.append(metrics.get('cpu_percent', 0))
         self.memory_data.append(metrics.get('memory_percent', 0))
         self.disk_write_data.append(metrics.get('disk_write_speed', 0))
+
+        # Fetch topic count in background every few seconds to avoid blocking
+        try:
+            now = datetime.now().timestamp()
+            if (now - getattr(self, '_last_topic_async', 0)) > 3.0 and self._threadpool.activeThreadCount() == 0:
+                worker = LiveChartsWidget.TopicCountWorker(self.ros2_manager, self.topic_count_ready)
+                self._threadpool.start(worker)
+                self._last_topic_async = now
+        except Exception:
+            pass
         
         # Update plots efficiently (only if we have data and every N updates for smoothness)
         # Adaptive update frequency based on data volatility
@@ -353,6 +414,21 @@ class LiveChartsWidget(QWidget):
         self.stats_labels['avg_cpu'].setText(f"{np.mean(cpu):.1f}%")
         self.stats_labels['peak_memory'].setText(f"{np.max(memory):.1f}%")
         self.stats_labels['avg_memory'].setText(f"{np.mean(memory):.1f}%")
+
+    def _on_topic_count_ready(self, count: int):
+        """Slot called when background topic-count fetch completes"""
+        try:
+            # Append latest topic count and keep buffer size
+            self.topic_count_data.append(count)
+            # Optionally trigger a light-weight redraw of only the topic plot
+            try:
+                if len(self.time_data) > 0:
+                    time_array = np.array(list(self.time_data))
+                    self.topic_count_plot.curve.setData(time_array, np.array(list(self.topic_count_data)))
+            except Exception:
+                pass
+        except Exception:
+            pass
         
     def toggle_pause(self):
         """Toggle pause/resume"""
