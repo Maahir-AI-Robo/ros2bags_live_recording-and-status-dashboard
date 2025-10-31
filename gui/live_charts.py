@@ -290,7 +290,29 @@ class LiveChartsWidget(QWidget):
         self.disk_write_data.append(metrics.get('disk_write_speed', 0))
         
         # Update plots efficiently (only if we have data and every N updates for smoothness)
-        if len(self.time_data) > 0 and self.update_counter % 2 == 0:  # Update display every 2 seconds
+        # Adaptive update frequency based on data volatility
+        # Skip some redraws to reduce GPU load while maintaining visual smoothness
+        
+        # Calculate update frequency: skip fewer frames if data is volatile (changing fast)
+        should_update = False
+        skip_threshold = 2  # Default: update display every 2 data points collected
+        
+        # Check if we have recent significant changes (heuristic for volatility)
+        if len(self.msg_rate_data) > 5:
+            recent_values = list(self.msg_rate_data)[-5:]
+            # If variance is high, update more frequently (don't skip as much)
+            data_variance = np.var(recent_values) if recent_values else 0
+            if data_variance > 5.0:  # High variance = volatile data
+                skip_threshold = 1  # Update every point (no skipping)
+            elif data_variance > 1.0:  # Medium variance
+                skip_threshold = 2  # Update every 2 points
+            else:  # Low variance = stable data
+                skip_threshold = 3  # Skip more frames for stable data
+        
+        if self.update_counter % skip_threshold == 0:
+            should_update = True
+        
+        if len(self.time_data) > 0 and should_update:
             time_array = np.array(list(self.time_data))
             
             self.msg_rate_plot.curve.setData(time_array, np.array(list(self.msg_rate_data)))
@@ -307,6 +329,7 @@ class LiveChartsWidget(QWidget):
                     plot.enableAutoRange(enable=True)
         
         # Update statistics less frequently - every 10 updates (10 seconds)
+        # Statistics are computationally cheap, but still worth optimizing
         if self.update_counter % 10 == 0:
             self.update_statistics()
         
@@ -363,7 +386,7 @@ class LiveChartsWidget(QWidget):
         self.disk_write_plot.curve.setData([], [])
         
     def change_time_window(self, window):
-        """Change time window for charts"""
+        """Change time window for charts - with memory management limits"""
         windows = {
             "1 min": 60,
             "5 min": 300,
@@ -373,10 +396,23 @@ class LiveChartsWidget(QWidget):
         
         new_max = windows.get(window, 60)
         
+        # OPTIMIZATION: Enforce reasonable limits for memory management
+        # Different limits based on typical update intervals
+        # At 300-500ms update intervals:
+        # - 60 points = ~20-30 seconds
+        # - 300 points = ~100-150 seconds (~2 minutes)
+        # - 600 points = ~200-300 seconds (~4-5 minutes)
+        # - 1800 points = ~600-900 seconds (~10-15 minutes)
+        
+        # Cap at reasonable maximum for memory efficiency
+        MAX_BUFFER_SIZE = 2000  # Hard limit for memory safety
+        if new_max > MAX_BUFFER_SIZE:
+            new_max = MAX_BUFFER_SIZE
+        
         # Update buffer sizes
         self.max_points = new_max
         
-        # Recreate deques with new max length
+        # Recreate deques with new max length (preserves existing data up to new limit)
         self.time_data = deque(self.time_data, maxlen=new_max)
         self.msg_rate_data = deque(self.msg_rate_data, maxlen=new_max)
         self.bandwidth_data = deque(self.bandwidth_data, maxlen=new_max)

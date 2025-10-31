@@ -932,25 +932,39 @@ class MainWindow(QMainWindow):
             
     @pyqtSlot()
     def on_recording_started(self):
-        """Handle recording started event"""
+        """Handle recording started event - optimize timers for active recording"""
         self.is_recording = True
         self.metrics_collector.reset()
         self.update_status("Recording in progress...")
         
-        # Timers are already set to very infrequent (5-30 seconds)
-        # No need to pause or modify them - they won't cause freezing
+        # OPTIMIZATION: Increase timer intervals during recording to reduce CPU load
+        # Recording process is I/O intensive, so we back off on UI updates
+        # This prevents UI lag during heavy bag file writes
+        
+        # Increase ROS2 timer interval when recording (reduce frequency)
+        # Less frequent ROS2 queries = less CPU contention with recording process
+        current_ros2_interval = self.ros2_timer.interval()
+        if current_ros2_interval > 0:
+            # Multiply by 1.5 during recording (e.g., 10s → 15s)
+            self.ros2_timer.setInterval(int(current_ros2_interval * 1.5))
+        
+        # Metrics timer: reduce frequency during recording (already at 5s, make it 8s)
+        # This gives more CPU to the recording process
+        self.metrics_timer.setInterval(8000)  # 8 seconds instead of 5
         
         # Show notification
         self.show_notification("Recording Started", "ROS2 bag recording in progress")
         
     @pyqtSlot()
     def on_recording_stopped(self):
-        """Handle recording stopped event - with auto-upload support"""
+        """Handle recording stopped event - restore normal timer frequencies"""
         self.is_recording = False
         self.update_status("Recording stopped")
         
-        # Timers stay at their slow intervals (5-30 seconds) - no changes needed
-        # They were already set to prevent freezing
+        # OPTIMIZATION: Restore normal timer frequencies after recording
+        # Use performance mode settings for proper frequencies
+        self.ros2_timer.setInterval(self.perf_settings['ros2_update_interval'])
+        self.metrics_timer.setInterval(self.perf_settings['metrics_update_interval'])
         
         self.refresh_recording_history()
         
