@@ -96,13 +96,30 @@ class ServiceMonitorWidget(QWidget):
         if self.async_ros2_manager:
             self.async_ros2_manager.get_services_async(self._on_services_ready)
         else:
-            try:
-                services_info = self.ros2_manager.get_services_info()
-                self._on_services_ready(services_info)
-            except Exception as e:
-                print(f"Error refreshing services: {e}")
-                self.service_count_label.setText("Services: 0 (Error)")
-                self._is_updating = False
+            # Fallback: don't do synchronous call! Queue in thread pool instead
+            from PyQt5.QtCore import QThreadPool, QRunnable, pyqtSlot  # type: ignore
+            
+            class SyncRefreshWorker(QRunnable):
+                def __init__(worker_self, parent_widget):
+                    super().__init__()
+                    worker_self.parent = parent_widget
+                
+                @pyqtSlot()
+                def run(worker_self):
+                    try:
+                        services_info = worker_self.parent.ros2_manager.get_services_info()
+                        worker_self.parent._on_services_ready(services_info)
+                    except Exception as e:
+                        print(f"Error refreshing services (async fallback): {e}")
+                        worker_self.parent.service_count_label.setText("Services: 0 (Error)")
+                        worker_self.parent._is_updating = False
+            
+            if not hasattr(self, '_refresh_threadpool'):
+                self._refresh_threadpool = QThreadPool()
+                self._refresh_threadpool.setMaxThreadCount(1)
+            
+            worker = SyncRefreshWorker(self)
+            self._refresh_threadpool.start(worker)
     
     def _on_services_ready(self, services_info):
         """Callback when services data is ready"""

@@ -148,7 +148,7 @@ class MainWindow(QMainWindow):
         print(f"\nUsing {self.performance_manager.get_current_mode().value.upper()} mode")
         print(f"{'='*60}\n")
         
-        self.ros2_manager = ROS2Manager()
+        self.ros2_manager = ROS2Manager(performance_mode_manager=self.performance_manager)
         self.async_ros2 = AsyncROS2Manager(
             self.ros2_manager,
             max_threads=self.perf_settings['max_threads'],
@@ -448,6 +448,9 @@ class MainWindow(QMainWindow):
         """Handle performance mode change"""
         # Get new settings
         self.perf_settings = self.performance_manager.get_mode_settings()
+        
+        # Update subprocess timeout in ROS2Manager
+        self.ros2_manager.update_subprocess_timeout()
         
         # Update async manager
         self.async_ros2.max_threads = self.perf_settings['max_threads']

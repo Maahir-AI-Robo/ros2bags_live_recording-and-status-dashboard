@@ -26,7 +26,7 @@ except Exception:
 class ROS2Manager:
     """Manages ROS2 bag recording and topic information - AGGRESSIVE OPTIMIZATION"""
     
-    def __init__(self):
+    def __init__(self, performance_mode_manager=None):
         self.output_directory = os.path.expanduser("~/ros2_recordings")
         self.recording_process = None
         self.current_bag_path = None
@@ -47,6 +47,10 @@ class ROS2Manager:
         self._last_nodes_list = []
         self._last_services_list = []
         
+        # Performance mode manager for dynamic timeouts
+        self.performance_mode_manager = performance_mode_manager
+        self._subprocess_timeout = self._calculate_subprocess_timeout()
+        
     def set_output_directory(self, directory):
         """Set the output directory for recordings"""
         self.output_directory = directory
@@ -55,6 +59,27 @@ class ROS2Manager:
     def get_recordings_directory(self):
         """Get the recordings directory"""
         return self.output_directory
+    
+    def _calculate_subprocess_timeout(self):
+        """Calculate subprocess timeout based on performance mode"""
+        if not self.performance_mode_manager:
+            # Default: 8 seconds (safe for most systems)
+            return 8.0
+        
+        try:
+            mode_settings = self.performance_mode_manager.get_mode_settings()
+            # Use cache_timeout as baseline, but ensure minimum 7 seconds for ROS2 operations
+            # get_topics_info() observed at 6.168 seconds, so we need at least 7-8 seconds
+            cache_timeout = mode_settings.get('cache_timeout', 5.0)
+            # Add 2-3 seconds buffer to the cache timeout (operations may take longer than cache)
+            return max(8.0, cache_timeout + 3.0)
+        except Exception:
+            # Fallback to safe timeout on any error
+            return 8.0
+    
+    def update_subprocess_timeout(self):
+        """Update subprocess timeout (call this if performance mode changes)"""
+        self._subprocess_timeout = self._calculate_subprocess_timeout()
         
     def get_topics_info(self):
         """Get information about available ROS2 topics - ULTRA FAST with aggressive caching"""
@@ -69,12 +94,12 @@ class ROS2Manager:
         topics = []
         
         try:
-            # Get list of topics with reasonable timeout (2 seconds for the list command)
+            # Get list of topics with dynamic timeout based on performance mode
             result = subprocess.run(
                 ['ros2', 'topic', 'list'],
                 capture_output=True,
                 text=True,
-                timeout=2.0  # Increased timeout - list can take time on first call
+                timeout=self._subprocess_timeout  # Dynamic timeout based on performance mode
             )
             
             if result.returncode == 0:
@@ -146,13 +171,13 @@ class ROS2Manager:
         return topics
         
     def _get_topic_type(self, topic_name):
-        """Get the message type for a topic - with timeout"""
+        """Get the message type for a topic - with dynamic timeout"""
         try:
             result = subprocess.run(
                 ['ros2', 'topic', 'type', topic_name],
                 capture_output=True,
                 text=True,
-                timeout=2.0  # Increased to 2.0s - topics can be slow to respond
+                timeout=self._subprocess_timeout  # Use dynamic timeout
             )
             
             if result.returncode == 0:

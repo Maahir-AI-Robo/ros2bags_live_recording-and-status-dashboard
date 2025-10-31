@@ -97,13 +97,30 @@ class NodeMonitorWidget(QWidget):
         if self.async_ros2_manager:
             self.async_ros2_manager.get_nodes_async(self._on_nodes_ready)
         else:
-            try:
-                nodes_info = self.ros2_manager.get_nodes_info()
-                self._on_nodes_ready(nodes_info)
-            except Exception as e:
-                print(f"Error refreshing nodes: {e}")
-                self.node_count_label.setText("Nodes: 0 (Error)")
-                self._is_updating = False
+            # Fallback: don't do synchronous call! Queue in thread pool instead
+            from PyQt5.QtCore import QThreadPool, QRunnable, pyqtSlot  # type: ignore
+            
+            class SyncRefreshWorker(QRunnable):
+                def __init__(worker_self, parent_widget):
+                    super().__init__()
+                    worker_self.parent = parent_widget
+                
+                @pyqtSlot()
+                def run(worker_self):
+                    try:
+                        nodes_info = worker_self.parent.ros2_manager.get_nodes_info()
+                        worker_self.parent._on_nodes_ready(nodes_info)
+                    except Exception as e:
+                        print(f"Error refreshing nodes (async fallback): {e}")
+                        worker_self.parent.node_count_label.setText("Nodes: 0 (Error)")
+                        worker_self.parent._is_updating = False
+            
+            if not hasattr(self, '_refresh_threadpool'):
+                self._refresh_threadpool = QThreadPool()
+                self._refresh_threadpool.setMaxThreadCount(1)
+            
+            worker = SyncRefreshWorker(self)
+            self._refresh_threadpool.start(worker)
     
     def _on_nodes_ready(self, nodes_info):
         """Callback when nodes data is ready"""
