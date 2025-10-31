@@ -123,14 +123,34 @@ class TopicMonitorWidget(QWidget):
             # Use async manager - callback when data ready
             self.async_ros2_manager.get_topics_async(self._on_topics_ready)
         else:
-            # Fallback: sync call with error handling
-            try:
-                topics_info = self.ros2_manager.get_topics_info()
-                self._on_topics_ready(topics_info)
-            except Exception as e:
-                print(f"Error refreshing topics: {e}")
-                self.topic_count_label.setText(f"Topics: 0 (Error: ROS2 may not be running)")
-                self._is_updating = False
+            # Fallback: don't do synchronous call! Queue in thread pool instead
+            # This prevents UI freezing for 6+ seconds
+            from PyQt5.QtCore import QThreadPool, QRunnable, pyqtSlot  # type: ignore
+            
+            class SyncRefreshWorker(QRunnable):
+                def __init__(worker_self, parent_widget):
+                    super().__init__()
+                    worker_self.parent = parent_widget
+                
+                @pyqtSlot()
+                def run(worker_self):
+                    try:
+                        # Perform blocking call in thread
+                        topics_info = worker_self.parent.ros2_manager.get_topics_info()
+                        # Call callback on main thread via Qt signal
+                        worker_self.parent._on_topics_ready(topics_info)
+                    except Exception as e:
+                        print(f"Error refreshing topics (async fallback): {e}")
+                        worker_self.parent.topic_count_label.setText(f"Topics: 0 (Error: ROS2 may not be running)")
+                        worker_self.parent._is_updating = False
+            
+            # Queue in thread pool (non-blocking)
+            if not hasattr(self, '_refresh_threadpool'):
+                self._refresh_threadpool = QThreadPool()
+                self._refresh_threadpool.setMaxThreadCount(1)  # Single-threaded
+            
+            worker = SyncRefreshWorker(self)
+            self._refresh_threadpool.start(worker)
     
     def _on_topics_ready(self, topics_info):
         """Callback when topics data is ready from async operation"""
