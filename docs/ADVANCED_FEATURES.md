@@ -156,7 +156,6 @@ profiler.export_report("/path/to/report.json")
 |----------|--------|
 | **Ctrl+R** | Start/Stop Recording (toggle) |
 | **Ctrl+S** | Stop Recording (if active) |
-| **Ctrl+P** | Switch to Playback Tab |
 | **Ctrl+L** | Switch to Live Charts Tab |
 | **Ctrl+E** | Export Metrics & Performance Data |
 | **Ctrl+H** | Show Keyboard Shortcuts Help |
@@ -268,7 +267,7 @@ collector.update_system_metrics()
 - ✅ High-frequency topics (100+ Hz)
 - ✅ Large messages (camera images, point clouds)
 - ✅ Network failures (upload resilience)
-- ✅ Concurrent operations (record + playback + upload)
+- ✅ Concurrent recording + network uploads
 
 ---
 

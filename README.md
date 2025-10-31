@@ -48,13 +48,6 @@ An offline-first desktop application for recording and monitoring ROS2 bag files
 - Automatic timestamp-based naming
 - Recording compression support
 
-### ▶️ **Bag Playback Control**
-- Play back recorded bags directly from the dashboard
-- Adjustable playback speed (0.1x - 10x)
-- Loop playback option
-- Start paused mode
-- Quick access to recorded bags
-
 ### 📊 **Real-time Metrics & Statistics**
 - **Recording Metrics:**
   - Recording duration (HH:MM:SS)
@@ -123,7 +116,6 @@ An offline-first desktop application for recording and monitoring ROS2 bag files
 - File size, duration, topic count
 - Start time and completion status
 - Open recordings folder directly
-- Quick playback access
 
 ### 🚀 **Advanced Features**
 - **Offline First**: Works independently without internet
@@ -279,22 +271,7 @@ python3 main.py
    - Wait for "ML package created" message ⭐
    - Recording saved to `~/ros2_recordings/recording_YYYYMMDD_HHMMSS`
    - ML package created in `ml_datasets/recording_YYYYMMDD_HHMMSS/`
-
-#### 3️⃣ **Playback Recordings**
-
-**Playback Tab:**
-1. Click "Browse" and select a bag folder
-2. Adjust playback speed (0.1x to 10x)
-3. Optional: Enable "Loop" or "Start Paused"
-4. Click "Start Playback"
-5. Monitor playback status
-
-**Or use command line:**
-```bash
-ros2 bag play ~/ros2_recordings/recording_20251025_120000
-```
-
-#### 4️⃣ **Use ML Datasets** ⭐
+#### 3️⃣ **Use ML Datasets** ⭐
 
 Every recording automatically creates an ML-ready package:
 
@@ -447,7 +424,7 @@ This dashboard is designed for **patent-quality performance**:
 - ✅ Systems with 100+ ROS2 topics
 - ✅ Long recordings (hours)
 - ✅ Poor network conditions
-- ✅ Concurrent recording + playback + uploads
+- ✅ Concurrent recording + network uploads
 
 ## Quick Start
 
@@ -563,7 +540,6 @@ ros2_dashboard/
 │   ├── node_monitor.py         # ROS2 node monitoring
 │   ├── service_monitor.py      # Service discovery
 │   ├── topic_echo.py           # Live topic message viewer
-│   ├── bag_playback.py         # Bag playback controls
 │   ├── recording_control.py    # Recording controls
 │   ├── metrics_display.py      # Metrics visualization
 │   ├── advanced_stats.py       # System and ROS2 statistics
@@ -597,8 +573,8 @@ Handles all ROS2 interactions:
 - Topic discovery and monitoring
 - Node and service discovery
 - Bag recording (start/stop)
-- Bag playback control
 - Bag file information retrieval
+- ML export preparation
 - Disk usage monitoring
 - QoS information
 
@@ -611,16 +587,16 @@ Collects and calculates recording metrics:
 - System resource monitoring
 
 ### GUI Components
-- **MainWindow**: Main application window with 7 tabbed interfaces
+- **MainWindow**: Main application window with 10 tabbed interfaces
 - **TopicMonitorWidget**: Displays available topics with selection
 - **NodeMonitorWidget**: Shows active ROS2 nodes
 - **ServiceMonitorWidget**: Lists available services
 - **TopicEchoWidget**: Live topic message preview
-- **BagPlaybackWidget**: Playback control interface
 - **RecordingControlWidget**: Recording start/stop controls
 - **MetricsDisplayWidget**: Live metrics visualization
 - **AdvancedStatsWidget**: System and ROS2 statistics
-- **NetworkUploadWidget**: Upload monitoring and control ⭐ NEW
+- **NetworkUploadWidget**: Upload monitoring and control ⭐
+- **LiveChartsWidget**: Real-time performance visualization
 
 ### Network Components ⭐ NEW
 - **NetworkManager**: Offline-first upload system with:
@@ -648,12 +624,11 @@ The dashboard uses these ROS2 CLI commands internally:
 - `ros2 service list` - Get available services
 - `ros2 service type <service>` - Get service type
 - `ros2 bag record` - Record bags
-- `ros2 bag play` - Playback bags
 - `ros2 bag info` - Get bag information
 
-## Playback Recordings
+## Using Recorded Bags
 
-To play back recorded bags, use:
+To play back recorded bags (using ROS2 CLI):
 ```bash
 ros2 bag play ~/ros2_recordings/recording_20251025_120000
 ```
@@ -892,7 +867,6 @@ ros2bags_live_recording-and-status-dashboard/
 │   ├── advanced_stats.py        # Advanced statistics
 │   ├── node_monitor.py          # Node monitoring
 │   ├── service_monitor.py       # Service monitoring
-│   ├── bag_playback.py          # Bag playback control
 │   ├── recording_templates.py   # Recording presets
 │   ├── themes.py                # Dark/light themes
 │   └── performance_settings_dialog.py # Performance tuning

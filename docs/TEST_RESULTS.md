@@ -24,13 +24,12 @@
 - ✅ `core.metrics_collector` - Recording metrics calculation
 - ✅ `core.network_manager` - Offline-first upload system
 
-### GUI Modules (10/10)
+### GUI Modules (9/9)
 - ✅ `gui.main_window` - Main application window
 - ✅ `gui.topic_monitor` - Topic monitoring widget
 - ✅ `gui.node_monitor` - Node monitoring widget
 - ✅ `gui.service_monitor` - Service discovery widget
 - ✅ `gui.topic_echo` - Live message viewer
-- ✅ `gui.bag_playback` - Playback controls
 - ✅ `gui.recording_control` - Recording interface
 - ✅ `gui.metrics_display` - Metrics visualization
 - ✅ `gui.advanced_stats` - System statistics
@@ -40,7 +39,7 @@
 - ✅ `main.py` - Application launcher
 - ✅ `upload_server.py` - Flask upload server
 
-**Result:** 15/15 modules loaded successfully
+**Result:** 14/14 modules loaded successfully
 
 ## Core Class Instantiation Tests
 

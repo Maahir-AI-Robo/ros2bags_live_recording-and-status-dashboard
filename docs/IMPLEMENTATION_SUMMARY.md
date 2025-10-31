@@ -31,12 +31,6 @@ A **production-ready, offline-first ROS2 data recording and monitoring dashboard
 - Array truncation support
 - Real-time streaming display
 
-#### ▶️ Playback Tab
-- **Play recorded bags from dashboard**
-- Adjustable playback speed (0.1x - 10x)
-- Loop playback mode
-- Direct access to recording history
-
 #### 📊 Stats Tab
 - **System Resources:**
   - CPU, Memory, Disk I/O, Network monitoring
@@ -146,7 +140,6 @@ ros2_dashboard/
 │   ├── node_monitor.py             # Node monitoring
 │   ├── service_monitor.py          # Service discovery
 │   ├── topic_echo.py               # Live message viewer
-│   ├── bag_playback.py             # Bag playback controls
 │   ├── recording_control.py        # Recording interface
 │   ├── metrics_display.py          # Metrics visualization
 │   ├── advanced_stats.py           # System statistics

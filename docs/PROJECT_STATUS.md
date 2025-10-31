@@ -141,7 +141,7 @@ python3 main.py
 
 ### ✅ All Features Preserved
 - ROS2 topic/node/service monitoring
-- Bag recording and playback
+- Bag recording and ML export
 - Network discovery and upload
 - Live charts and visualization
 - Theme switching
