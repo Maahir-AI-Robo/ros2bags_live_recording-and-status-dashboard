@@ -19,6 +19,7 @@ from core.ros2_manager import ROS2Manager  # type: ignore
 from core.metrics_collector import MetricsCollector  # type: ignore
 from core.async_worker import AsyncROS2Manager  # type: ignore
 from core.freeze_prevention import WindowVisibilityTracker, FreezePrevention  # type: ignore
+from core.system_detection import SystemDetector, DynamicPerformanceTuner  # type: ignore
 from gui.topic_monitor import TopicMonitorWidget  # type: ignore
 from gui.recording_control import RecordingControlWidget  # type: ignore
 from gui.metrics_display import MetricsDisplayWidget  # type: ignore
@@ -807,11 +808,12 @@ class MainWindow(QMainWindow):
     
     def update_metrics_smart(self):
         """
-        OPTIMIZED: Only update metrics if visible
+        OPTIMIZED: Only update metrics if visible + CPU BACKOFF
         
         - Skip if window hidden
         - Skip if already updating
-        - Still provides responsive feedback
+        - AGGRESSIVE backoff if CPU > 80%
+        - Skip cycles if CPU > 90%
         """
         # Skip if window is hidden
         if not self.isVisible():
@@ -821,20 +823,80 @@ class MainWindow(QMainWindow):
         if getattr(self, '_metrics_task_running', False):
             return
         
+        # CHECK CPU FOR AGGRESSIVE BACKOFF
+        try:
+            import psutil
+            cpu_percent = psutil.cpu_percent(interval=0)
+            
+            if cpu_percent > 90.0:
+                # CRITICAL: Skip entire update cycle if CPU maxed out
+                return
+            elif cpu_percent > 80.0:
+                # HIGH LOAD: Double the update interval to back off
+                try:
+                    current_interval = self.metrics_timer.interval()
+                    normal_interval = self.perf_settings.get('metrics_update_interval', 300)
+                    if current_interval <= normal_interval:
+                        self.metrics_timer.setInterval(min(normal_interval * 2, 10000))
+                    return  # Skip this cycle
+                except Exception:
+                    pass
+            else:
+                # NORMAL: Restore normal interval if backed off
+                try:
+                    current_interval = self.metrics_timer.interval()
+                    normal_interval = self.perf_settings.get('metrics_update_interval', 300)
+                    if current_interval > normal_interval:
+                        self.metrics_timer.setInterval(normal_interval)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        
         # Call the existing metrics update
         self.update_metrics()
             
     def update_ros2_info_async(self):
         """
-        ULTRA-OPTIMIZED LAZY TAB LOADING with smart debouncing
+        ULTRA-OPTIMIZED with CPU BACKOFF
         
         Changes:
         - Only update the currently visible tab (reduces CPU 40-50%)
         - Use debounced refresh methods on each monitor widget
-        - Prevents non-visible tabs from consuming resources
-        - Smart deduplication at async manager level prevents concurrent requests
+        - AGGRESSIVE backoff if CPU > 80%
+        - Skip cycles if CPU > 90%
         """
         import time
+        
+        # CHECK CPU FOR AGGRESSIVE BACKOFF FIRST
+        try:
+            import psutil
+            cpu_percent = psutil.cpu_percent(interval=0)
+            
+            if cpu_percent > 90.0:
+                # CRITICAL: Skip entire update cycle if CPU maxed out
+                return
+            elif cpu_percent > 80.0:
+                # HIGH LOAD: Double the update interval to back off
+                try:
+                    current_interval = self.ros2_timer.interval()
+                    normal_interval = self.perf_settings.get('ros2_update_interval', 2000)
+                    if current_interval <= normal_interval:
+                        self.ros2_timer.setInterval(min(normal_interval * 2, 15000))
+                    return  # Skip this cycle
+                except Exception:
+                    pass
+            else:
+                # NORMAL: Restore normal interval if backed off
+                try:
+                    current_interval = self.ros2_timer.interval()
+                    normal_interval = self.perf_settings.get('ros2_update_interval', 2000)
+                    if current_interval > normal_interval:
+                        self.ros2_timer.setInterval(normal_interval)
+                except Exception:
+                    pass
+        except Exception:
+            pass
         
         # DEBOUNCE - skip if updated recently
         current_time = time.time()

@@ -157,7 +157,7 @@ class PerformanceModeManager(QObject):
                 
                 # Cache settings (seconds) - AGGRESSIVE CACHING = NO BLOCKING
                 'cache_timeout': 5,                # 5 seconds - Less subprocess calls
-                'system_metrics_cache': 0.5,       # 500ms - Fresh but not excessive
+                'system_metrics_cache': 1.0,       # 1.0 second - Reduce psutil overhead dramatically
                 'topic_check_interval': 5,         # 5 seconds - Reduced blocking
                 
                 # Chart settings - OPTIMIZED FOR SMOOTH RENDERING
@@ -191,7 +191,7 @@ class PerformanceModeManager(QObject):
                 
                 # Cache settings (seconds) - MAXIMUM CACHING
                 'cache_timeout': 6,                # 6 seconds - aggressive caching
-                'system_metrics_cache': 1,         # 1 second - reduce system calls
+                'system_metrics_cache': 2.0,       # 2 seconds - very low polling frequency
                 'topic_check_interval': 6,         # 6 seconds - minimal checks
                 
                 # Chart settings - OPTIMIZED FOR LOW-END

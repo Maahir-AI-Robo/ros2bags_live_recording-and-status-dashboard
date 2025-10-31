@@ -13,6 +13,16 @@ import numpy as np
 from collections import deque
 from datetime import datetime
 
+# Import dynamic system detection
+try:
+    from core.system_detection import SystemDetector, DynamicPerformanceTuner
+except ImportError:
+    try:
+        from system_detection import SystemDetector, DynamicPerformanceTuner
+    except ImportError:
+        SystemDetector = None
+        DynamicPerformanceTuner = None
+
 
 class LiveChartsWidget(QWidget):
     """Widget for real-time data visualization with multiple charts"""
@@ -43,13 +53,23 @@ class LiveChartsWidget(QWidget):
         self.metrics_collector = metrics_collector
         self.ros2_manager = ros2_manager
         
-        # Adaptive performance settings
-        self.buffer_size = buffer_size
-        self.update_interval = update_interval
+        # DYNAMIC SETTINGS: Auto-tune based on system specs
+        self.dynamic_settings = self._get_dynamic_settings()
+        
+        # Adaptive performance settings (can be overridden by dynamic settings)
+        self.buffer_size = buffer_size or self.dynamic_settings.get('max_buffer_size', 600)
+        self.update_interval = update_interval or self.dynamic_settings.get('chart_update_interval', 300)
         self.auto_pause = auto_pause
         
-        # Data buffers (adaptive size)
-        self.max_points = buffer_size
+        # Dynamic parameters
+        self.plot_skip_threshold = self.dynamic_settings.get('plot_skip_threshold', 5)
+        self.stats_update_frequency = self.dynamic_settings.get('stats_update_frequency', 30)
+        self.cpu_backoff_high = self.dynamic_settings.get('cpu_backoff_threshold_high', 80.0)
+        self.cpu_backoff_critical = self.dynamic_settings.get('cpu_backoff_threshold_critical', 90.0)
+        self.cpu_interval_multiplier = self.dynamic_settings.get('cpu_interval_multiplier', 2.0)
+        
+        # Data buffers (adaptive size based on system)
+        self.max_points = self.buffer_size
         self.time_data = deque(maxlen=self.max_points)
         
         # Recording metrics buffers
@@ -68,13 +88,37 @@ class LiveChartsWidget(QWidget):
         
         # Threadpool for background small tasks (topic count)
         self._threadpool = QThreadPool()
-        self._threadpool.setMaxThreadCount(1)
+        max_threads = self.dynamic_settings.get('max_threads', 1)
+        self._threadpool.setMaxThreadCount(max_threads)
         self._last_topic_async = 0
         # Connect signal to UI update
         self.topic_count_ready.connect(self._on_topic_count_ready)  # type: ignore
 
         self.init_ui()
         self.setup_update_timer()
+    
+    def _get_dynamic_settings(self):
+        """Get dynamic settings based on system specs"""
+        try:
+            if SystemDetector is not None and DynamicPerformanceTuner is not None:
+                specs = SystemDetector.get_system_specs()
+                settings = DynamicPerformanceTuner.get_tuned_settings(specs)
+                print(f"✅ Auto-tuned for {specs['system_category']} system ({specs['cpu_cores']} cores, {specs['ram_gb']:.1f}GB RAM)")
+                return settings
+        except Exception as e:
+            print(f"⚠️  Dynamic tuning failed: {e}, using defaults")
+        
+        # Return default settings if detection fails
+        return {
+            'max_buffer_size': 600,
+            'chart_update_interval': 300,
+            'plot_skip_threshold': 5,
+            'stats_update_frequency': 30,
+            'cpu_backoff_threshold_high': 80.0,
+            'cpu_backoff_threshold_critical': 90.0,
+            'cpu_interval_multiplier': 2.0,
+            'max_threads': 2,
+        }
         
     def init_ui(self):
         """Initialize UI components"""
@@ -181,7 +225,7 @@ class LiveChartsWidget(QWidget):
         
         # Auto-scale checkbox
         self.autoscale_check = QCheckBox("Auto-scale Y")
-        self.autoscale_check.setChecked(True)
+        self.autoscale_check.setChecked(False)  # Disabled by default to reduce GPU load
         layout.addWidget(self.autoscale_check)
         
         layout.addStretch()
@@ -280,153 +324,205 @@ class LiveChartsWidget(QWidget):
             self.status_label.setText("⏸ Paused (tab hidden)")
         
     def update_charts(self):
-        """Update all charts with latest data - OPTIMIZED"""
+        """Update all charts with latest data - DYNAMIC OPTIMIZATION"""
         if self.paused:
             return
-        # Adaptive CPU-based throttling: if system is overloaded, back off chart updates
-        try:
-            cpu_now = psutil.cpu_percent(interval=0)
-        except Exception:
-            cpu_now = 0.0
-        # If CPU is very high, increase timer interval to reduce load
-        if cpu_now > 85.0:
-            # Increase interval (but cap to 5s)
+        
+        self.update_counter += 1
+        
+        # CRITICAL OPTIMIZATION: Use DYNAMIC thresholds based on system specs
+        # This adapts to the user's hardware automatically
+        need_plot_update = (self.update_counter % self.plot_skip_threshold == 0)
+        need_stats_update = (self.update_counter % self.stats_update_frequency == 0)
+        
+        if not need_plot_update and not need_stats_update:
+            # Nothing to do this cycle - just append data and return early
             try:
-                self.update_timer.setInterval(min(max(self.update_interval * 2, 1000), 5000))
+                metrics = self.metrics_collector.get_live_metrics(None)
+                if metrics is None:
+                    metrics = {}
+                
+                metrics_safe = {
+                    'message_rate': float(metrics.get('message_rate', 0) or 0),
+                    'write_speed_mb_s': float(metrics.get('write_speed_mb_s', 0) or 0),
+                    'topic_count': int(metrics.get('topic_count', 0) or 0),
+                    'cpu_percent': float(metrics.get('cpu_percent', 0) or 0),
+                    'memory_percent': float(metrics.get('memory_percent', 0) or 0),
+                    'disk_write_speed': float(metrics.get('disk_write_speed', 0) or 0)
+                }
+                
+                if self.start_time is None:
+                    self.start_time = datetime.now()
+                
+                elapsed = (datetime.now() - self.start_time).total_seconds()
+                self.time_data.append(elapsed)
+                self.msg_rate_data.append(metrics_safe['message_rate'])
+                self.bandwidth_data.append(metrics_safe['write_speed_mb_s'])
+                self.topic_count_data.append(metrics_safe['topic_count'])
+                self.cpu_data.append(metrics_safe['cpu_percent'])
+                self.memory_data.append(metrics_safe['memory_percent'])
+                self.disk_write_data.append(metrics_safe['disk_write_speed'])
             except Exception:
                 pass
-            # Skip heavy plotting cycle while backing off
+            return
+        
+        # COLLECT METRICS: Only when we actually need to do something
+        try:
+            metrics = self.metrics_collector.get_live_metrics(None)
+            if metrics is None:
+                metrics = {}
+        except Exception:
+            metrics = {}
+        
+        # Ensure all required metrics exist with numeric defaults
+        metrics_safe = {
+            'message_rate': float(metrics.get('message_rate', 0) or 0),
+            'write_speed_mb_s': float(metrics.get('write_speed_mb_s', 0) or 0),
+            'topic_count': int(metrics.get('topic_count', 0) or 0),
+            'cpu_percent': float(metrics.get('cpu_percent', 0) or 0),
+            'memory_percent': float(metrics.get('memory_percent', 0) or 0),
+            'disk_write_speed': float(metrics.get('disk_write_speed', 0) or 0)
+        }
+        
+        # Check CPU for adaptive throttling USING DYNAMIC THRESHOLDS
+        cpu_now = metrics_safe['cpu_percent']
+        if cpu_now > self.cpu_backoff_critical:
+            # Skip entire cycle if CPU critically high (dynamic threshold)
+            return
+        elif cpu_now > self.cpu_backoff_high:
+            # Increase the update interval during high CPU (dynamic threshold and multiplier)
+            try:
+                backoff_interval = int(self.update_interval * self.cpu_interval_multiplier)
+                self.update_timer.setInterval(min(backoff_interval, 5000))
+            except Exception:
+                pass
             return
         else:
-            # Restore normal interval if previously increased
+            # Restore normal interval
             try:
                 if self.update_timer.interval() != self.update_interval:
                     self.update_timer.setInterval(self.update_interval)
             except Exception:
                 pass
-
-        self.update_counter += 1
-            
+        
         # Initialize start time if first update
         if self.start_time is None:
             self.start_time = datetime.now()
-            
-        # Calculate elapsed time
+        
+        # Calculate elapsed time and append to buffers
         elapsed = (datetime.now() - self.start_time).total_seconds()
         self.time_data.append(elapsed)
+        self.msg_rate_data.append(metrics_safe['message_rate'])
+        self.bandwidth_data.append(metrics_safe['write_speed_mb_s'])
+        self.topic_count_data.append(metrics_safe['topic_count'])
+        self.cpu_data.append(metrics_safe['cpu_percent'])
+        self.memory_data.append(metrics_safe['memory_percent'])
+        self.disk_write_data.append(metrics_safe['disk_write_speed'])
         
-        # Get live metrics (includes system stats even when not recording)
-        # NOTE: avoid calling blocking ROS2 operations on the main thread.
-        try:
-            metrics = self.metrics_collector.get_live_metrics(None)
-        except Exception:
-            # If metrics fail, use zeros to keep charts updating
-            metrics = {
-                'message_rate': 0,
-                'write_speed_mb_s': 0,
-                'topic_count': 0,
-                'cpu_percent': 0,
-                'memory_percent': 0,
-                'disk_write_speed': 0
-            }
-        
-        # Recording metrics
-        self.msg_rate_data.append(metrics.get('message_rate', 0))
-        self.bandwidth_data.append(metrics.get('write_speed_mb_s', 0))
-        self.topic_count_data.append(metrics.get('topic_count', 0))
-        
-        # System metrics
-        self.cpu_data.append(metrics.get('cpu_percent', 0))
-        self.memory_data.append(metrics.get('memory_percent', 0))
-        self.disk_write_data.append(metrics.get('disk_write_speed', 0))
-
-        # Fetch topic count in background every few seconds to avoid blocking
+        # Fetch topic count in background only if not under load
         try:
             now = datetime.now().timestamp()
-            if (now - getattr(self, '_last_topic_async', 0)) > 3.0 and self._threadpool.activeThreadCount() == 0:
-                worker = LiveChartsWidget.TopicCountWorker(self.ros2_manager, self.topic_count_ready)
-                self._threadpool.start(worker)
-                self._last_topic_async = now
+            cpu_threshold = self.cpu_backoff_high - 10  # Back off earlier for async work
+            if cpu_now < cpu_threshold and (now - getattr(self, '_last_topic_async', 0)) > 3.0:
+                if self._threadpool.activeThreadCount() == 0:
+                    worker = LiveChartsWidget.TopicCountWorker(self.ros2_manager, self.topic_count_ready)
+                    self._threadpool.start(worker)
+                    self._last_topic_async = now
         except Exception:
             pass
         
-        # Update plots efficiently (only if we have data and every N updates for smoothness)
-        # Adaptive update frequency based on data volatility
-        # Skip some redraws to reduce GPU load while maintaining visual smoothness
-        
-        # Calculate update frequency: skip fewer frames if data is volatile (changing fast)
-        should_update = False
-        skip_threshold = 2  # Default: update display every 2 data points collected
-        
-        # Check if we have recent significant changes (heuristic for volatility)
-        if len(self.msg_rate_data) > 5:
-            recent_values = list(self.msg_rate_data)[-5:]
-            # If variance is high, update more frequently (don't skip as much)
-            data_variance = np.var(recent_values) if recent_values else 0
-            if data_variance > 5.0:  # High variance = volatile data
-                skip_threshold = 1  # Update every point (no skipping)
-            elif data_variance > 1.0:  # Medium variance
-                skip_threshold = 2  # Update every 2 points
-            else:  # Low variance = stable data
-                skip_threshold = 3  # Skip more frames for stable data
-        
-        if self.update_counter % skip_threshold == 0:
-            should_update = True
-        
-        if len(self.time_data) > 0 and should_update:
-            time_array = np.array(list(self.time_data))
+        # PLOT UPDATE
+        if need_plot_update:
+            if len(self.time_data) < 2:
+                return
             
-            self.msg_rate_plot.curve.setData(time_array, np.array(list(self.msg_rate_data)))
-            self.bandwidth_plot.curve.setData(time_array, np.array(list(self.bandwidth_data)))
-            self.topic_count_plot.curve.setData(time_array, np.array(list(self.topic_count_data)))
-            self.cpu_plot.curve.setData(time_array, np.array(list(self.cpu_data)))
-            self.memory_plot.curve.setData(time_array, np.array(list(self.memory_data)))
-            self.disk_write_plot.curve.setData(time_array, np.array(list(self.disk_write_data)))
-            
-            # Auto-scale if enabled (batch operation)
-            if self.autoscale_check.isChecked():
-                for plot in [self.msg_rate_plot, self.bandwidth_plot, self.topic_count_plot,
-                            self.cpu_plot, self.memory_plot, self.disk_write_plot]:
-                    plot.enableAutoRange(enable=True)
+            try:
+                # ULTRA-FAST: Use fromiter for zero-copy where possible
+                time_array = np.fromiter(self.time_data, dtype=np.float32)
+                msg_rate_array = np.fromiter(self.msg_rate_data, dtype=np.float32)
+                bandwidth_array = np.fromiter(self.bandwidth_data, dtype=np.float32)
+                topic_count_array = np.fromiter(self.topic_count_data, dtype=np.float32)
+                cpu_array = np.fromiter(self.cpu_data, dtype=np.float32)
+                memory_array = np.fromiter(self.memory_data, dtype=np.float32)
+                disk_write_array = np.fromiter(self.disk_write_data, dtype=np.float32)
+                
+                # BATCH ALL PLOT UPDATES (no intermediate redraws)
+                self.msg_rate_plot.curve.setData(time_array, msg_rate_array)
+                self.bandwidth_plot.curve.setData(time_array, bandwidth_array)
+                self.topic_count_plot.curve.setData(time_array, topic_count_array)
+                self.cpu_plot.curve.setData(time_array, cpu_array)
+                self.memory_plot.curve.setData(time_array, memory_array)
+                self.disk_write_plot.curve.setData(time_array, disk_write_array)
+                
+                # NEVER auto-scale by default (huge GPU overhead)
+                # Only scale if explicitly enabled AND we're not under CPU load AND charts visible
+                if self.autoscale_check.isChecked() and cpu_now < 50.0:
+                    # Batch autoscale operations (very infrequently)
+                    if self.update_counter % 40 == 0:  # Only every 40 cycles (~6 seconds)
+                        for plot in [self.msg_rate_plot, self.bandwidth_plot, self.topic_count_plot,
+                                    self.cpu_plot, self.memory_plot, self.disk_write_plot]:
+                            try:
+                                plot.enableAutoRange(enable=True, recursive=False)
+                            except Exception:
+                                pass
+            except Exception:
+                # Silently fail plot updates to prevent UI freeze
+                pass
         
-        # Update statistics less frequently - every 10 updates (10 seconds)
-        # Statistics are computationally cheap, but still worth optimizing
-        if self.update_counter % 10 == 0:
+        # STATISTICS UPDATE
+        if need_stats_update:
             self.update_statistics()
         
     def update_statistics(self):
-        """Update statistics panel"""
-        if len(self.msg_rate_data) == 0:
+        """Update statistics panel - LIGHTWEIGHT"""
+        if len(self.msg_rate_data) < 2:
             return
-            
-        # Calculate statistics
-        msg_rates = np.array(self.msg_rate_data)
-        bandwidths = np.array(self.bandwidth_data)
-        cpu = np.array(self.cpu_data)
-        memory = np.array(self.memory_data)
         
-        # Update labels
-        self.stats_labels['peak_msg_rate'].setText(f"{np.max(msg_rates):.1f} msg/s")
-        self.stats_labels['avg_msg_rate'].setText(f"{np.mean(msg_rates):.1f} msg/s")
-        self.stats_labels['peak_bandwidth'].setText(f"{np.max(bandwidths):.2f} MB/s")
-        self.stats_labels['avg_bandwidth'].setText(f"{np.mean(bandwidths):.2f} MB/s")
-        self.stats_labels['peak_cpu'].setText(f"{np.max(cpu):.1f}%")
-        self.stats_labels['avg_cpu'].setText(f"{np.mean(cpu):.1f}%")
-        self.stats_labels['peak_memory'].setText(f"{np.max(memory):.1f}%")
-        self.stats_labels['avg_memory'].setText(f"{np.mean(memory):.1f}%")
+        try:
+            # Calculate statistics with minimal allocations
+            msg_rates = list(self.msg_rate_data)
+            bandwidths = list(self.bandwidth_data)
+            cpu = list(self.cpu_data)
+            memory = list(self.memory_data)
+            
+            # Use Python built-in functions instead of numpy for lighter computation
+            max_msg_rate = max(msg_rates) if msg_rates else 0
+            avg_msg_rate = sum(msg_rates) / len(msg_rates) if msg_rates else 0
+            
+            max_bandwidth = max(bandwidths) if bandwidths else 0
+            avg_bandwidth = sum(bandwidths) / len(bandwidths) if bandwidths else 0
+            
+            max_cpu = max(cpu) if cpu else 0
+            avg_cpu = sum(cpu) / len(cpu) if cpu else 0
+            
+            max_memory = max(memory) if memory else 0
+            avg_memory = sum(memory) / len(memory) if memory else 0
+            
+            # Update labels
+            self.stats_labels['peak_msg_rate'].setText(f"{max_msg_rate:.1f} msg/s")
+            self.stats_labels['avg_msg_rate'].setText(f"{avg_msg_rate:.1f} msg/s")
+            self.stats_labels['peak_bandwidth'].setText(f"{max_bandwidth:.2f} MB/s")
+            self.stats_labels['avg_bandwidth'].setText(f"{avg_bandwidth:.2f} MB/s")
+            self.stats_labels['peak_cpu'].setText(f"{max_cpu:.1f}%")
+            self.stats_labels['avg_cpu'].setText(f"{avg_cpu:.1f}%")
+            self.stats_labels['peak_memory'].setText(f"{max_memory:.1f}%")
+            self.stats_labels['avg_memory'].setText(f"{avg_memory:.1f}%")
+        except Exception:
+            # Silently fail to prevent UI freeze
+            pass
 
     def _on_topic_count_ready(self, count: int):
-        """Slot called when background topic-count fetch completes"""
+        """Slot called when background topic-count fetch completes - LIGHTWEIGHT"""
         try:
+            # Only update if CPU is not under heavy load
+            if self.cpu_data and len(self.cpu_data) > 0:
+                recent_cpu = float(list(self.cpu_data)[-1])
+                if recent_cpu > 75.0:
+                    # Skip updating topic count if CPU high to reduce load
+                    return
+            
             # Append latest topic count and keep buffer size
             self.topic_count_data.append(count)
-            # Optionally trigger a light-weight redraw of only the topic plot
-            try:
-                if len(self.time_data) > 0:
-                    time_array = np.array(list(self.time_data))
-                    self.topic_count_plot.curve.setData(time_array, np.array(list(self.topic_count_data)))
-            except Exception:
-                pass
         except Exception:
             pass
         

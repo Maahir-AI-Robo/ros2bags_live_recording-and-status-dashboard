@@ -129,10 +129,10 @@ class MetricsCollector:
         self.update_system_metrics()
         
     def update_system_metrics(self):
-        """Update system performance metrics (ADAPTIVE caching based on performance mode)"""
+        """Update system performance metrics (ULTRA-AGGRESSIVE caching)"""
         current_time = time.time()
         
-        # Use cached values if still fresh
+        # Use cached values if still fresh (CRITICAL: respect cache timeout)
         if (self._system_metrics_cache is not None and 
             current_time - self._system_metrics_cache_time < self.system_metrics_cache_timeout):
             # Use cached values (no lock needed for read)
@@ -140,26 +140,29 @@ class MetricsCollector:
                 self.metrics.update(self._system_metrics_cache)
             return
         
-        # CPU usage (non-blocking with interval=0)
+        # CPU usage (non-blocking with interval=0) - FAST
         try:
             cpu_percent = psutil.cpu_percent(interval=0)
         except:
-            cpu_percent = 0.0
+            cpu_percent = self.metrics.get('cpu_percent', 0.0)  # Use previous value on error
         
-        # Memory usage
+        # Memory usage - FAST
         try:
             mem = psutil.virtual_memory()
             memory_percent = mem.percent
         except:
-            memory_percent = 0.0
+            memory_percent = self.metrics.get('memory_percent', 0.0)
         
-        # Disk I/O speed - adaptive check based on cache timeout
-        disk_write_speed = 0.0
+        # Disk I/O speed - Check VERY infrequently to avoid overhead
+        disk_write_speed = self.metrics.get('disk_write_speed', 0.0)  # Default to previous value
+        
         if not hasattr(self, '_last_disk_check'):
             self._last_disk_check = 0
-            
-        # Check disk I/O at 2x the system metrics cache timeout
-        if current_time - self._last_disk_check > (self.system_metrics_cache_timeout * 2):
+        
+        # Only check disk I/O every 4x the system metrics cache timeout (expensive operation)
+        check_interval = max(self.system_metrics_cache_timeout * 4, 4.0)
+        
+        if current_time - self._last_disk_check > check_interval:
             try:
                 disk_io = psutil.disk_io_counters()
                 if disk_io and self.last_disk_io and self.last_update_time:
@@ -167,15 +170,12 @@ class MetricsCollector:
                     time_delta = current_time - self.last_update_time
                     if time_delta > 0:
                         disk_write_speed = (write_bytes_delta / time_delta) / (1024 * 1024)  # MB/s
+                        disk_write_speed = max(0, disk_write_speed)  # Ensure non-negative
                 
                 self.last_disk_io = disk_io
                 self._last_disk_check = current_time
             except:
-                disk_write_speed = 0.0
-        else:
-            # Use last known value
-            with self._lock:
-                disk_write_speed = self.metrics.get('disk_write_speed', 0.0)
+                pass
         
         # Update metrics with lock
         with self._lock:
@@ -183,7 +183,7 @@ class MetricsCollector:
             self.metrics['memory_percent'] = memory_percent
             self.metrics['disk_write_speed'] = disk_write_speed
         
-        # Cache the system metrics
+        # Cache the system metrics for next check
         self._system_metrics_cache = {
             'cpu_percent': cpu_percent,
             'memory_percent': memory_percent,
@@ -204,22 +204,9 @@ class MetricsCollector:
         # Update system metrics (cached)
         self.update_system_metrics()
         
-        # Check topic count occasionally (every 3 seconds) for Live Charts
-        if ros2_manager:
-            if not hasattr(self, '_last_topic_check'):
-                self._last_topic_check = 0
-            
-            time_since_check = time.time() - self._last_topic_check
-            if time_since_check > 3.0:  # Every 3 seconds
-                try:
-                    topics = ros2_manager.get_topics_info()
-                    with self._lock:
-                        self.metrics['topic_count'] = len(topics)
-                    self._last_topic_check = time.time()
-                except:
-                    pass
-        elif ros2_manager and not hasattr(self, '_last_topic_check'):
-            self._last_topic_check = 0  # Initialize
+        # NOTE: Do NOT fetch topic count here (blocking call). Let background workers do it.
+        # If ros2_manager is provided and we somehow still need it, the caller can fetch in background.
+        # This prevents blocking the main thread during chart updates.
         
         with self._lock:
             return self.metrics.copy()
