@@ -322,10 +322,14 @@ class LiveChartsWidget(QWidget):
             
             self._charts_loaded = True
             print("✅ Live Charts loaded successfully (async)")
+            print(f"   Timer running: {self.update_timer.isActive() if hasattr(self, 'update_timer') else False}")
+            print(f"   Paused: {self.paused}")
+            print(f"   Update interval: {self.update_interval}ms")
             
             # Start the update timer now that charts are ready
             if hasattr(self, 'update_timer') and not self.paused:
                 self.update_timer.start(self.update_interval)
+                print(f"   ✅ Timer restarted with interval {self.update_interval}ms")
                 if hasattr(self, 'status_label'):
                     # Show data collection status
                     self.status_label.setText("📊 Collecting data... (wait 3-5 seconds)")
@@ -515,16 +519,18 @@ class LiveChartsWidget(QWidget):
         """Update all charts with latest data - DYNAMIC OPTIMIZATION"""
         # SAFETY: Skip updates if charts not yet loaded (lazy loading)
         if not self._charts_loaded:
+            # Charts not loaded yet - this is normal until user views the tab
             return
         
         if self.paused:
+            # User manually paused - don't update
             return
         
         self.update_counter += 1
         
-        # DEBUG: Print every 30 updates (~10 seconds at 300ms interval)
-        if self.update_counter % 30 == 0:
-            print(f"📊 Live Charts update #{self.update_counter}, data points: {len(self.time_data)}")
+        # DEBUG: Print first few updates to confirm timer is working
+        if self.update_counter <= 5 or self.update_counter % 50 == 0:
+            print(f"📊 Live Charts update #{self.update_counter}, points: {len(self.time_data)}, paused: {self.paused}")
         
         # CRITICAL OPTIMIZATION: Use DYNAMIC thresholds based on system specs
         # This adapts to the user's hardware automatically
@@ -567,14 +573,7 @@ class LiveChartsWidget(QWidget):
             metrics = self.metrics_collector.get_live_metrics(None)
             if metrics is None:
                 metrics = {}
-            
-            # DEBUG: Print metrics every 30 updates
-            if self.update_counter % 30 == 0:
-                print(f"   Metrics: CPU={metrics.get('cpu_percent', 0):.1f}%, "
-                      f"MEM={metrics.get('memory_percent', 0):.1f}%, "
-                      f"Topics={metrics.get('topic_count', 0)}")
-        except Exception as e:
-            print(f"⚠️  Error getting metrics: {e}")
+        except Exception:
             metrics = {}
         
         # Ensure all required metrics exist with numeric defaults
