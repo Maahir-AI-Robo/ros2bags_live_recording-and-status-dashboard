@@ -305,6 +305,19 @@ class ROS2Manager:
         if self.is_recording:
             print("Already recording")
             return False
+        
+        # Check if there are any topics available (helpful diagnostic)
+        try:
+            available_topics = self.get_topics_info()
+            if available_topics:
+                print(f"📡 Found {len(available_topics)} topics to record")
+            else:
+                print("⚠️  WARNING: No ROS2 topics found!")
+                print("   Recording will start, but won't capture data until topics are published")
+                print("   TIP: Start your ROS2 nodes or run the demo topic generator:")
+                print("        python3 tests/demo_topics_generator.py")
+        except Exception as e:
+            print(f"⚠️  Could not check topics: {e}")
             
         try:
             self.current_bag_path = os.path.join(self.output_directory, bag_name)
@@ -319,17 +332,24 @@ class ROS2Manager:
                 cmd.append('-a')
                 
             # CRITICAL: Start recording process with COMPLETE ISOLATION
-            # - No stdout/stderr buffering (prevents memory buildup)
+            # - Capture stderr to detect issues (but don't block on it)
             # - Separate process group (survives parent crashes)
             # - High priority (ensures data capture even under load)
+            
+            # Create a log file for recording output (helps debugging)
+            log_file = os.path.join(self.output_directory, f"{bag_name}_recording.log")
+            log_handle = open(log_file, 'w')
+            
             self.recording_process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.DEVNULL,  # Don't buffer output (prevents memory issues)
-                stderr=subprocess.DEVNULL,  # Don't buffer errors (prevents memory issues)
+                stdout=log_handle,  # Log output for debugging
+                stderr=subprocess.STDOUT,  # Combine stderr with stdout
                 text=True,
                 preexec_fn=os.setpgrp,  # Create new process group (isolation)
-                close_fds=True  # Close file descriptors (clean isolation)
+                close_fds=False  # Keep log file open
             )
+            
+            print(f"📝 Recording log: {log_file}")
             
             # Set process priority to high (ensures recording continues even under CPU load)
             try:
