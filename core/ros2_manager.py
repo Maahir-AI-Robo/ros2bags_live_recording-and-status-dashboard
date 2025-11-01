@@ -36,6 +36,7 @@ class ROS2Manager:
     def __init__(self, performance_mode_manager=None):
         self.output_directory = os.path.expanduser("~/ros2_recordings")
         self.recording_process = None
+        self.recording_log_handle = None  # Handle for recording log file
         self.current_bag_path = None
         self.is_recording = False
         self.recording_thread = None
@@ -338,16 +339,25 @@ class ROS2Manager:
             
             # Create a log file for recording output (helps debugging)
             log_file = os.path.join(self.output_directory, f"{bag_name}_recording.log")
-            log_handle = open(log_file, 'w')
+            log_handle = open(log_file, 'w', buffering=1)  # Line buffered
+            
+            # CRITICAL FIX: Set environment to ensure ros2 bag doesn't buffer output
+            env = os.environ.copy()
+            env['PYTHONUNBUFFERED'] = '1'  # Force Python to not buffer output
+            env['RCUTILS_CONSOLE_OUTPUT_FORMAT'] = '[{severity}] [{name}]: {message}'
             
             self.recording_process = subprocess.Popen(
                 cmd,
                 stdout=log_handle,  # Log output for debugging
                 stderr=subprocess.STDOUT,  # Combine stderr with stdout
                 text=True,
+                env=env,  # Use unbuffered environment
                 preexec_fn=os.setpgrp,  # Create new process group (isolation)
                 close_fds=False  # Keep log file open
             )
+            
+            # Store log handle to close it later
+            self.recording_log_handle = log_handle
             
             print(f"📝 Recording log: {log_file}")
             
@@ -544,6 +554,16 @@ class ROS2Manager:
                 
             finally:
                 self.recording_process = None
+                
+                # Close log file handle if it exists
+                if hasattr(self, 'recording_log_handle') and self.recording_log_handle:
+                    try:
+                        self.recording_log_handle.flush()
+                        self.recording_log_handle.close()
+                        self.recording_log_handle = None
+                        print("📝 Recording log file closed")
+                    except Exception as e:
+                        print(f"⚠️  Error closing log file: {e}")
                 
         # Clear current bag path first in main thread to avoid races in UI
         self.current_bag_path = None
