@@ -532,7 +532,27 @@ class ROS2Manager:
         if bag_path_to_package:
             def _do_export(path):
                 try:
-                    time.sleep(2)  # Wait for bag file to be fully written
+                    # Wait for bag file to be fully written and flushed to disk
+                    # ros2 bag record needs time to close files after SIGINT
+                    time.sleep(3)
+                    
+                    # Verify bag directory exists before trying to export
+                    if not os.path.exists(path):
+                        print(f"⚠️  Bag directory not found, skipping ML export: {path}")
+                        return
+                    
+                    # Check if directory has any files
+                    has_files = False
+                    for root, dirs, files in os.walk(path):
+                        if files:
+                            has_files = True
+                            break
+                    
+                    if not has_files:
+                        print(f"⚠️  Bag directory is empty, skipping ML export: {path}")
+                        return
+                    
+                    # Export ML package
                     self.export_bag_ml(path)
                     print(f"📦 ML package created for {path}")
                 except Exception as e:
