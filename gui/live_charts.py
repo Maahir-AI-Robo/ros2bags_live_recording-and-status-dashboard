@@ -640,16 +640,40 @@ class LiveChartsWidget(QWidget):
                 return
             
             try:
-                # ULTRA-FAST: Use fromiter for zero-copy where possible
-                time_array = np.fromiter(self.time_data, dtype=np.float32)
-                msg_rate_array = np.fromiter(self.msg_rate_data, dtype=np.float32)
-                bandwidth_array = np.fromiter(self.bandwidth_data, dtype=np.float32)
-                topic_count_array = np.fromiter(self.topic_count_data, dtype=np.float32)
-                cpu_array = np.fromiter(self.cpu_data, dtype=np.float32)
-                memory_array = np.fromiter(self.memory_data, dtype=np.float32)
-                disk_write_array = np.fromiter(self.disk_write_data, dtype=np.float32)
-                
+                # Build numpy arrays from deques (safe, explicit lengths)
+                time_array = np.array(list(self.time_data), dtype=np.float32)
+                msg_rate_array = np.array(list(self.msg_rate_data), dtype=np.float32)
+                bandwidth_array = np.array(list(self.bandwidth_data), dtype=np.float32)
+                topic_count_array = np.array(list(self.topic_count_data), dtype=np.float32)
+                cpu_array = np.array(list(self.cpu_data), dtype=np.float32)
+                memory_array = np.array(list(self.memory_data), dtype=np.float32)
+                disk_write_array = np.array(list(self.disk_write_data), dtype=np.float32)
+
+                # Ensure all arrays have the same length by aligning to the shortest
+                lengths = [time_array.size, msg_rate_array.size, bandwidth_array.size,
+                           topic_count_array.size, cpu_array.size, memory_array.size, disk_write_array.size]
+                min_len = min(lengths) if lengths else 0
+                if min_len == 0:
+                    # Nothing to plot yet
+                    return
+
+                if time_array.size != min_len:
+                    time_array = time_array[-min_len:]
+                if msg_rate_array.size != min_len:
+                    msg_rate_array = msg_rate_array[-min_len:]
+                if bandwidth_array.size != min_len:
+                    bandwidth_array = bandwidth_array[-min_len:]
+                if topic_count_array.size != min_len:
+                    topic_count_array = topic_count_array[-min_len:]
+                if cpu_array.size != min_len:
+                    cpu_array = cpu_array[-min_len:]
+                if memory_array.size != min_len:
+                    memory_array = memory_array[-min_len:]
+                if disk_write_array.size != min_len:
+                    disk_write_array = disk_write_array[-min_len:]
+
                 # BATCH ALL PLOT UPDATES (no intermediate redraws)
+                # Use explicit x,y arrays with matching lengths to avoid boolean-mask errors in pyqtgraph
                 self.msg_rate_plot.curve.setData(time_array, msg_rate_array)
                 self.bandwidth_plot.curve.setData(time_array, bandwidth_array)
                 self.topic_count_plot.curve.setData(time_array, topic_count_array)
