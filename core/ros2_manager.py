@@ -22,6 +22,14 @@ except Exception:
     package_bag_for_ml = None
     populate_schema_with_bag_info = None
 
+# Import advanced topic Hz monitor
+try:
+    from .topic_hz_monitor import TopicHzMonitor
+    ADVANCED_HZ_MONITOR_AVAILABLE = True
+except Exception:
+    ADVANCED_HZ_MONITOR_AVAILABLE = False
+    TopicHzMonitor = None
+
 # Import CPU optimizer for advanced performance
 try:
     from .cpu_optimizer import get_cpu_optimizer
@@ -63,6 +71,14 @@ class ROS2Manager:
         self.recording_health_checks = 0
         self.recording_warnings = []
         self._subprocess_timeout = self._calculate_subprocess_timeout()
+        
+        # ADVANCED: Topic Hz monitoring with adaptive timeouts and background updates
+        if ADVANCED_HZ_MONITOR_AVAILABLE and TopicHzMonitor is not None:
+            self.hz_monitor = TopicHzMonitor(max_workers=8)
+            self.hz_monitor.start_background_monitoring(interval=15.0)  # Update every 15s
+            print("✅ Advanced Hz monitor enabled (adaptive + background updates)")
+        else:
+            self.hz_monitor = None
         
     def set_output_directory(self, directory):
         """Set the output directory for recordings"""
@@ -168,12 +184,19 @@ class ROS2Manager:
                             'hz': 0.0  # Placeholder - will be updated below
                         })
                     
-                    # Fetch Hz values in parallel (fast method with timeout)
+                    # Fetch Hz values using ADVANCED monitor if available
                     # Only fetch for topics that have known types (skip Unknown to save time)
                     topics_to_check = [t for t in topic_names if topic_types.get(t, "Unknown") != "Unknown"]
                     if topics_to_check:
                         try:
-                            hz_values = self.get_topics_hz_batch(topics_to_check, max_workers=8)
+                            if self.hz_monitor:
+                                # Use advanced monitor with quick mode for initial load
+                                # Background monitoring will refine values automatically
+                                hz_values = self.hz_monitor.get_hz_batch_smart(topics_to_check, quick_mode=True)
+                            else:
+                                # Fallback to old batch method
+                                hz_values = self.get_topics_hz_batch(topics_to_check, max_workers=8)
+                            
                             # Update Hz values in topics list
                             for topic_info in topics:
                                 if topic_info['name'] in hz_values:
