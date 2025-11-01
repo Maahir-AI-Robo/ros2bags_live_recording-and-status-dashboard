@@ -47,6 +47,11 @@ ros2_uploads/
 *.sqlite
 *.log
 
+# ML Datasets (large binary files)
+ml_datasets/**/*.tar.gz
+ml_datasets/**/*.bag
+ml_datasets/**/*.db3
+
 # Temporary test files (but keep test_installation.py)
 test_*.py
 !test_installation.py
