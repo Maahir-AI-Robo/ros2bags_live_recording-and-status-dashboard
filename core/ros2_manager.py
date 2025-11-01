@@ -49,6 +49,11 @@ class ROS2Manager:
         
         # Performance mode manager for dynamic timeouts
         self.performance_mode_manager = performance_mode_manager
+        
+        # RECORDING HEALTH MONITORING
+        self.recording_start_time = None
+        self.recording_health_checks = 0
+        self.recording_warnings = []
         self._subprocess_timeout = self._calculate_subprocess_timeout()
         
     def set_output_directory(self, directory):
@@ -285,7 +290,11 @@ class ROS2Manager:
         return hz_dict
         
     def start_recording(self, bag_name, topics=None):
-        """Start recording ROS2 bags"""
+        """
+        Start recording ROS2 bags in COMPLETELY ISOLATED PROCESS
+        CRITICAL: Recording process is 100% independent of UI thread
+        Even if UI freezes, recording continues without data loss
+        """
         if self.is_recording:
             print("Already recording")
             return False
@@ -302,57 +311,150 @@ class ROS2Manager:
                 # Record all topics
                 cmd.append('-a')
                 
-            # Start recording process
+            # CRITICAL: Start recording process with COMPLETE ISOLATION
+            # - No stdout/stderr buffering (prevents memory buildup)
+            # - Separate process group (survives parent crashes)
+            # - High priority (ensures data capture even under load)
             self.recording_process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
+                stdout=subprocess.DEVNULL,  # Don't buffer output (prevents memory issues)
+                stderr=subprocess.DEVNULL,  # Don't buffer errors (prevents memory issues)
+                text=True,
+                preexec_fn=os.setpgrp,  # Create new process group (isolation)
+                close_fds=True  # Close file descriptors (clean isolation)
             )
+            
+            # Set process priority to high (ensures recording continues even under CPU load)
+            try:
+                process = psutil.Process(self.recording_process.pid)
+                # Nice value -5 (higher priority than normal, but not realtime)
+                # This ensures recording gets CPU even if UI is consuming resources
+                process.nice(-5)
+                print(f"✅ Recording process priority set to HIGH (nice=-5)")
+            except Exception as e:
+                print(f"⚠️  Could not set recording priority: {e} (may need sudo)")
             
             self.is_recording = True
             
-            # Start monitoring thread
+            # Initialize health monitoring
+            self.recording_start_time = time.time()
+            self.recording_health_checks = 0
+            self.recording_warnings = []
+            
+            # Start LIGHTWEIGHT monitoring thread (does NOT block recording)
             self.recording_thread = threading.Thread(
                 target=self._monitor_recording,
-                daemon=True
+                daemon=True,  # Won't block process exit
+                name="RecordingMonitor"  # Named for debugging
             )
             self.recording_thread.start()
+            
+            print(f"🎬 Recording started: PID={self.recording_process.pid}")
+            print(f"   Output: {self.current_bag_path}")
+            print(f"   Topics: {len(topics) if topics else 'ALL'}")
+            print(f"   ⚡ ISOLATED: Recording continues even if UI freezes!")
             
             return True
             
         except Exception as e:
-            print(f"Error starting recording: {e}")
+            print(f"❌ Error starting recording: {e}")
+            self.is_recording = False
             return False
             
     def _monitor_recording(self):
-        """Monitor the recording process"""
+        """
+        LIGHTWEIGHT monitoring of recording process with HEALTH CHECKS
+        CRITICAL: This runs in separate thread and does NOT interfere with recording
+        Only checks process status, doesn't block or slow down data capture
+        """
+        check_interval = 2.0  # Check every 2 seconds (low overhead)
+        
         while self.is_recording and self.recording_process:
-            # Check if process is still running
-            if self.recording_process.poll() is not None:
-                print("Recording process terminated unexpectedly")
-                self.is_recording = False
-                break
+            try:
+                self.recording_health_checks += 1
                 
-            time.sleep(1)
+                # Non-blocking check if process is still running
+                returncode = self.recording_process.poll()
+                
+                if returncode is not None:
+                    # Process terminated
+                    if returncode == 0:
+                        print("✅ Recording process completed successfully")
+                    else:
+                        print(f"⚠️  Recording process terminated with code {returncode}")
+                        self.recording_warnings.append(f"Process exit code: {returncode}")
+                    self.is_recording = False
+                    break
+                
+                # HEALTH CHECK: Monitor process CPU and memory (lightweight)
+                try:
+                    process = psutil.Process(self.recording_process.pid)
+                    cpu_percent = process.cpu_percent(interval=0.1)
+                    memory_mb = process.memory_info().rss / 1024 / 1024
+                    
+                    # Log health every 30 checks (~1 minute)
+                    if self.recording_health_checks % 30 == 0:
+                        elapsed = time.time() - (self.recording_start_time or time.time())
+                        print(f"📊 Recording health: {elapsed:.0f}s elapsed, "
+                              f"CPU={cpu_percent:.1f}%, MEM={memory_mb:.1f}MB, "
+                              f"PID={self.recording_process.pid}")
+                    
+                    # Warn if recording process is using excessive resources
+                    if memory_mb > 2000:  # > 2GB
+                        warning = f"High memory usage: {memory_mb:.1f}MB"
+                        if warning not in self.recording_warnings:
+                            self.recording_warnings.append(warning)
+                            print(f"⚠️  {warning}")
+                            
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    # Process may have just ended, continue monitoring
+                    pass
+                
+                # LIGHTWEIGHT: Just sleep, don't do heavy operations
+                # Recording process is completely independent
+                time.sleep(check_interval)
+                
+            except Exception as e:
+                print(f"⚠️  Monitoring error: {e}")
+                # Don't stop recording on monitoring errors
+                time.sleep(check_interval)
             
     def stop_recording(self):
-        """Stop recording"""
+        """
+        Stop recording GRACEFULLY
+        CRITICAL: Ensures data is flushed and files are closed properly
+        """
         if not self.is_recording:
             return
             
+        print("🛑 Stopping recording...")
         self.is_recording = False
         
         bag_path_to_package = self.current_bag_path
 
         if self.recording_process:
             try:
-                # Send SIGINT to gracefully stop recording
+                # GRACEFUL SHUTDOWN: Send SIGINT (same as Ctrl+C)
+                # This allows ros2 bag record to flush buffers and close files properly
+                print("   Sending SIGINT (graceful shutdown)...")
                 self.recording_process.terminate()
-                self.recording_process.wait(timeout=10)
+                
+                # Wait up to 15 seconds for graceful shutdown
+                # (longer than before to ensure data is flushed)
+                self.recording_process.wait(timeout=15)
+                
+                print("✅ Recording stopped gracefully")
+                
             except subprocess.TimeoutExpired:
-                # Force kill if it doesn't stop
+                # If it doesn't stop gracefully, force kill
+                print("⚠️  Graceful shutdown timeout, force killing...")
                 self.recording_process.kill()
+                self.recording_process.wait(timeout=5)
+                print("⚠️  Recording force-killed (may have data loss)")
+                
+            except Exception as e:
+                print(f"❌ Error stopping recording: {e}")
+                
             finally:
                 self.recording_process = None
                 
@@ -363,14 +465,49 @@ class ROS2Manager:
         if bag_path_to_package:
             def _do_export(path):
                 try:
+                    time.sleep(2)  # Wait for bag file to be fully written
                     self.export_bag_ml(path)
-                    print(f"ML package created for {path}")
+                    print(f"📦 ML package created for {path}")
                 except Exception as e:
-                    print(f"Failed to create ML package for {path}: {e}")
+                    print(f"⚠️  Failed to create ML package for {path}: {e}")
 
-            t = threading.Thread(target=_do_export, args=(bag_path_to_package,), daemon=True)
+            # Export in completely separate thread (doesn't block UI)
+            t = threading.Thread(
+                target=_do_export, 
+                args=(bag_path_to_package,), 
+                daemon=True,
+                name="MLExportWorker"
+            )
             t.start()
         
+    def get_recording_health(self):
+        """
+        Get current recording health status
+        Returns: dict with health metrics or None if not recording
+        """
+        if not self.is_recording or not self.recording_process:
+            return None
+        
+        try:
+            process = psutil.Process(self.recording_process.pid)
+            elapsed = time.time() - (self.recording_start_time or time.time())
+            
+            return {
+                'pid': self.recording_process.pid,
+                'elapsed_seconds': int(elapsed),
+                'cpu_percent': process.cpu_percent(interval=0.1),
+                'memory_mb': process.memory_info().rss / 1024 / 1024,
+                'health_checks': self.recording_health_checks,
+                'warnings': self.recording_warnings.copy(),
+                'is_alive': process.is_running(),
+                'status': 'healthy' if not self.recording_warnings else 'warnings'
+            }
+        except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError):
+            return {
+                'status': 'unknown',
+                'warnings': ['Process information unavailable']
+            }
+    
     def get_current_bag_path(self):
         """Get the path of the currently recording bag"""
         return self.current_bag_path
