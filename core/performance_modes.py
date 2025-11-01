@@ -167,9 +167,9 @@ class PerformanceModeManager(QObject):
                 'hz_monitor_workers': 8,           # Good parallelism
                 'hz_quick_timeout': 2.5,           # Balanced quick checks
                 'hz_max_timeout': 10.0,            # Longer for slow topics (2 Hz)
-                'hz_background_interval': 15.0,    # Standard background updates
-                'hz_cache_fresh_age': 5.0,         # Fresh cache
-                'hz_cache_stale_age': 30.0,        # Standard refresh
+                'hz_background_interval': 30.0,    # Less frequent to save CPU (was 15.0)
+                'hz_cache_fresh_age': 10.0,        # Use cache longer (was 5.0)
+                'hz_cache_stale_age': 60.0,        # Much longer cache (was 30.0)
                 
                 # Cache settings (seconds) - AGGRESSIVE CACHING = NO BLOCKING
                 'cache_timeout': 5,                # 5 seconds - Less subprocess calls

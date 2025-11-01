@@ -100,13 +100,16 @@ class MetricsCollector:
                 current_size_mb = current_size / (1024 * 1024)
                 self.metrics['size_mb'] = current_size_mb
                 
-                # Calculate INSTANTANEOUS write speed (MB/s since last update)
-                # This gives a real-time indicator of current recording throughput
+                # Calculate time delta for rate calculations
+                time_delta = 0
                 if self.last_update_time and self.last_update_time != self.start_time:
                     time_delta = current_time - self.last_update_time
-                    if time_delta > 0:
-                        size_delta_mb = current_size_mb - self.last_size
-                        self.metrics['write_speed_mb_s'] = max(0, size_delta_mb / time_delta)
+                
+                # Calculate INSTANTANEOUS write speed (MB/s since last update)
+                # This gives a real-time indicator of current recording throughput
+                if time_delta > 0:
+                    size_delta_mb = current_size_mb - self.last_size
+                    self.metrics['write_speed_mb_s'] = max(0, size_delta_mb / time_delta)
                 else:
                     # First update - no delta available yet
                     self.metrics['write_speed_mb_s'] = 0.0

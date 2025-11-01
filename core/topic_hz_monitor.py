@@ -7,7 +7,7 @@ import subprocess
 import threading
 import time
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from typing import Dict, Optional, Tuple
 
 
@@ -306,25 +306,39 @@ class TopicHzMonitor:
                 future = executor.submit(self._measure_hz_with_timeout, topic, timeout)
                 future_to_topic[future] = topic
             
-            # Collect results
-            max_wait = max(self.MAX_TIMEOUT + 2.0, 12.0)  # Increased from 8.0
-            for future in as_completed(future_to_topic, timeout=max_wait):
-                try:
-                    topic = future_to_topic[future]
-                    hz = future.result(timeout=0.1)
-                    results[topic] = hz
-                    
-                    # Cache it
-                    with self._cache_lock:
-                        self._hz_cache[topic] = {
-                            'hz': hz,
-                            'timestamp': time.time(),
-                            'confidence': 'adaptive'
-                        }
-                except Exception:
-                    topic = future_to_topic.get(future)
-                    if topic:
-                        results[topic] = 0.0
+            # Collect results with tolerance for slow topics
+            max_wait = max(self.MAX_TIMEOUT + 2.0, 12.0)
+            try:
+                for future in as_completed(future_to_topic, timeout=max_wait):
+                    try:
+                        topic = future_to_topic[future]
+                        hz = future.result(timeout=0.1)
+                        results[topic] = hz
+                        
+                        # Cache it
+                        with self._cache_lock:
+                            self._hz_cache[topic] = {
+                                'hz': hz,
+                                'timestamp': time.time(),
+                                'confidence': 'adaptive'
+                            }
+                    except Exception:
+                        topic = future_to_topic.get(future)
+                        if topic:
+                            results[topic] = 0.0
+            except TimeoutError:
+                # Some futures didn't complete - that's OK, get what we can
+                for future, topic in future_to_topic.items():
+                    if topic not in results:
+                        # Try to get result if available
+                        if future.done():
+                            try:
+                                hz = future.result(timeout=0)
+                                results[topic] = hz
+                            except:
+                                results[topic] = 0.0
+                        else:
+                            results[topic] = 0.0
         
         return results
     
