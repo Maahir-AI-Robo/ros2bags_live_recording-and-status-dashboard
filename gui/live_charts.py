@@ -496,10 +496,16 @@ class LiveChartsWidget(QWidget):
             # This prevents blocking the UI thread during chart creation
             from PyQt5.QtCore import QTimer
             QTimer.singleShot(0, self._load_charts_async)
-            return  # Don't start timer yet, wait for charts to load
+            # Start timer immediately while charts are loading
+            QTimer.singleShot(100, self._start_update_timer)
+            return
         
-        if hasattr(self, 'update_timer') and self.auto_pause and not self.paused:
-            # Only start if user hasn't manually paused
+        # Charts already loaded - just start the timer
+        self._start_update_timer()
+    
+    def _start_update_timer(self):
+        """Helper to start the update timer safely"""
+        if hasattr(self, 'update_timer') and not self.update_timer.isActive():
             self.update_timer.start(self.update_interval)
             if hasattr(self, 'pause_btn'):
                 self.pause_btn.setText("⏸ Pause")
