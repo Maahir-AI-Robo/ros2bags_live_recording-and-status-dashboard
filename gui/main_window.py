@@ -716,8 +716,14 @@ class MainWindow(QMainWindow):
     
     def show_notification(self, title: str, message: str, icon=QSystemTrayIcon.Information):
         """Show desktop notification."""
-        if hasattr(self, 'tray_icon') and self.tray_icon.supportsMessages():
-            self.tray_icon.showMessage(title, message, icon, 3000)  # 3 second duration
+        try:
+            # Verify tray_icon is actually a QSystemTrayIcon object
+            if hasattr(self, 'tray_icon') and isinstance(self.tray_icon, QSystemTrayIcon):
+                if self.tray_icon.supportsMessages():
+                    self.tray_icon.showMessage(title, message, icon, 3000)  # 3 second duration
+        except (AttributeError, TypeError) as e:
+            # Silently fail if tray icon is not properly initialized
+            print(f"Warning: Could not show notification: {e}")
         
     def _warmup_cache(self):
         """
